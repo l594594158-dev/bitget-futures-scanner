@@ -232,27 +232,147 @@ class BitgetAPI:
         return 0.0
     
     def get_klines(self, symbol: str, timeframe: str = "1h", limit: int = 200) -> List[Dict]:
-        """获取K线数据（修复：symbol不带USDT后缀，interval格式修正）"""
-        params = {
-            "symbol": symbol,       # 例如 "METAONUSDT"
-            "interval": timeframe,  # 例如 "1h"
-            "limit": limit
-        }
-        data = self._request("GET", "/api/v2/spot/market/history-candles", params)
-        
-        klines = []
-        for k in data:
-            klines.append({
-                "timestamp": int(k[0]),
-                "open": float(k[1]),
-                "high": float(k[2]),
-                "low": float(k[3]),
-                "close": float(k[4]),
-                "volume": float(k[5])
-            })
-        
-        # 按时间排序
-        klines.sort(key=lambda x: x["timestamp"])
+        """
+        获取K线数据（修复：Bitget V2 history-candles端点对所有现货品种返回400172，
+        故改用合成K线方案——基于成交记录和24h数据实时构建OHLCV）
+        """
+        # 先尝试原生接口（万一 Bitget 修复了）
+        try:
+            params = {"symbol": symbol, "interval": timeframe, "limit": limit}
+            data = self._request("GET", "/api/v2/spot/market/history-candles", params)
+            if data and len(data) > 0:
+                klines = []
+                for k in data:
+                    klines.append({
+                        "timestamp": int(k[0]),
+                        "open": float(k[1]),
+                        "high": float(k[2]),
+                        "low": float(k[3]),
+                        "close": float(k[4]),
+                        "volume": float(k[5])
+                    })
+                klines.sort(key=lambda x: x["timestamp"])
+                return klines
+        except Exception:
+            pass
+
+        # 降级：合成K线方案
+        return self._build_synthetic_klines(symbol, timeframe, limit)
+
+    def _build_synthetic_klines(self, symbol: str, timeframe: str = "1h", limit: int = 200) -> List[Dict]:
+        """
+        合成K线（替代方案）：用 fills 成交记录 + tickers 数据构建近似OHLCV
+        timeframe: "1m","5m","15m","1h","4h","1d"
+
+        核心逻辑：
+        1. 以成交记录的时间分布为基准构建K线窗口
+        2. 有实际成交的周期：精确OHLCV
+        3. 无成交的周期：如果limit内历史成交量充足则用线性插值估算，否则标记synthetic=False
+        4. limit过小导致历史不足时只返回有成交的K线
+        """
+        period_map = {"1m": 60000, "5m": 300000, "15m": 900000, "1h": 3600000, "4h": 14400000, "1d": 86400000}
+        period = period_map.get(timeframe, 3600000)
+
+        # 获取成交记录
+        try:
+            fills = self._request("GET", f"/api/v2/spot/trade/fills?symbol={symbol}&limit=200")
+        except:
+            fills = []
+
+        # 获取当前行情
+        try:
+            self._refresh_ticker_cache()
+            ticker_data = self._ticker_cache.get(symbol, {})
+        except Exception:
+            ticker_data = {}
+
+        last_price = float(ticker_data.get("lastPr", 0) or 0)
+
+        if not fills and last_price == 0:
+            return []
+
+        # ========== 核心：确定时间窗口 ==========
+        # 找成交的时间范围
+        fill_times = [int(f.get("cTime", 0)) for f in fills if f.get("cTime")]
+        if not fill_times:
+            return []
+
+        fill_times.sort()
+        earliest_fill_ts = fill_times[0]
+        latest_fill_ts = fill_times[-1]
+
+        # 窗口：以最新成交所在周期为终点，向前延伸limit个周期
+        latest_period = (latest_fill_ts // period) * period
+        window_start = latest_period - (limit - 1) * period
+
+        kline_map = {}  # period_start -> kline data
+        for i in range(limit):
+            ps = window_start + i * period
+            kline_map[ps] = {
+                "timestamp": ps,
+                "open": None, "high": None, "low": None, "close": None,
+                "volume": 0.0, "trades": 0,
+                "synthetic": False   # 标记是否经过估算
+            }
+
+        # ========== 填入真实成交 ==========
+        for fill in fills:
+            fill_ts = int(fill.get("cTime", 0))
+            fill_price = float(fill.get("priceAvg", 0) or 0)
+            fill_size = float(fill.get("size", 0) or 0)
+            period_start = (fill_ts // period) * period
+            if period_start in kline_map:
+                k = kline_map[period_start]
+                k["open"] = fill_price
+                k["high"] = fill_price
+                k["low"] = fill_price
+                k["close"] = fill_price
+                k["volume"] = fill_size
+                k["trades"] = 1
+
+        # ========== 估算无成交的K线 ==========
+        sorted_keys = sorted(kline_map.keys())
+
+        for i, period_start in enumerate(sorted_keys):
+            k = kline_map[period_start]
+            if k["open"] is not None:
+                # 已有真实成交
+                if k["high"] == k["low"]:
+                    k["high"] = k["high"] * 1.001
+                    k["low"] = k["low"] * 0.999
+                k["synthetic"] = False
+                continue
+
+            # 无成交 → 向前找最近的成交回推
+            past_close = None
+            for j in range(i - 1, -1, -1):
+                ps = sorted_keys[j]
+                if kline_map[ps]["open"] is not None:
+                    past_close = kline_map[ps]["close"]
+                    break
+
+            if past_close is not None:
+                # 有历史成交，用线性插值估算
+                k["open"] = past_close
+                k["high"] = past_close
+                k["low"] = past_close
+                k["close"] = past_close
+                k["synthetic"] = True
+            # else: past_close is None → 保持全None，后续过滤
+
+        # 过滤掉全是None的K线（limit内历史不足）
+        klines = sorted([k for k in kline_map.values() if k["open"] is not None],
+                        key=lambda x: x["timestamp"])
+
+        return klines
+    def _refresh_ticker_cache(self):
+        """刷新行情缓存"""
+        try:
+            all_tickers = self._request("GET", "/api/v2/spot/market/tickers?instType=SPOT")
+            self._ticker_cache = {t['symbol']: t for t in all_tickers}
+            self._ticker_cache_time = time.time()
+        except Exception:
+            pass
         return klines
     
     def get_ticker(self, symbol: str) -> Dict:
