@@ -1,0 +1,38 @@
+{
+  "NVDAONUSDT": {
+    "entry_price": 176.75,
+    "stop_loss": 0.08,
+    "size_usdt": 25,
+    "quantity": 0.14144271570014144,
+    "entry_time": "2026-04-06T22:36:30.694950",
+    "highest_price": 177.23,
+    "trailing_stop": 162.61
+  },
+  "AAPLONUSDT": {
+    "entry_price": 262.46,
+    "stop_loss": 0.05,
+    "size_usdt": 25,
+    "quantity": 0.09525260992151185,
+    "entry_time": "2026-04-06T22:36:33.927910",
+    "highest_price": 262.8,
+    "trailing_stop": 249.33699999999996
+  },
+  "METAONUSDT": {
+    "entry_price": 577.98,
+    "stop_loss": 0.05,
+    "size_usdt": 25,
+    "quantity": 0.04325409183708779,
+    "entry_time": "2026-04-06T22:36:37.408012",
+    "highest_price": 580.25,
+    "trailing_stop": 549.081
+  },
+  "GOOGLONUSDT": {
+    "entry_price": 298.22,
+    "stop_loss": 0.05,
+    "size_usdt": 25,
+    "quantity": 0.08383072899201931,
+    "entry_time": "2026-04-06T22:59:50.632062",
+    "highest_price": 299.48,
+    "trailing_stop": 283.309
+  }
+}

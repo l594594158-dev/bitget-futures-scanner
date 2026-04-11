@@ -373,8 +373,7 @@ class BitgetAPI:
             self._ticker_cache_time = time.time()
         except Exception:
             pass
-        return klines
-    
+
     def get_ticker(self, symbol: str) -> Dict:
         """获取实时行情（修复：V2单ticker端点不可用，改用tickers批量接口缓存）"""
         # V2 /market/ticker?symbol=xxx 不存在，改用批量接口
