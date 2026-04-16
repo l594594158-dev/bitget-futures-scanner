@@ -512,6 +512,7 @@ class SignalAnalyzer:
         macd_4h = ind_4H['macd']
         macd_1d = ind_1D['macd']
         macd_5m = ind_5m['macd']
+        adx_4h = ind_4H['adx']
         
         # 风控过滤
         if ind_1H['adx'] < 25:
@@ -527,8 +528,11 @@ class SignalAnalyzer:
         cond_1d_bearish = ma7_1d < price and macd_1d < 0
         cond_5m_oversold = pct_b < 0.2 and rsi < 40 and adx > 25 and vol_ratio >= 1.5
         
-        if cond_4h_bearish and cond_1d_bearish and cond_5m_oversold:
-            reason = (f"做多A | 4h空头 MA7={ma7_4h:.1f}<{price:.1f} MACD={macd_4h:.2f}<0 | "
+        # 逆势信号需要4h ADX < 40（趋势不够强，反转概率高）
+        cond_adx_timing = adx_4h < 40
+        
+        if cond_4h_bearish and cond_1d_bearish and cond_5m_oversold and cond_adx_timing:
+            reason = (f"做多A | 4h空头 ADX={adx_4h:.1f}<40 MA7={ma7_4h:.1f}<{price:.1f} MACD={macd_4h:.2f}<0 | "
                       f"1d空头 | 5m超卖 pct_b={pct_b:.3f} RSI={rsi:.1f} ADX={adx:.1f}>25 vol={vol_ratio:.2f}x")
             return 'long_a', reason
         
@@ -560,8 +564,8 @@ class SignalAnalyzer:
         # 4h空头: MA7 < price AND MACD < 0
         # 1d空头: MA7 < price AND MACD < 0
         # 5m: %b>0.85 AND RSI>=82 AND ADX>25 AND vol_ratio>1.5
-        if cond_4h_bearish and cond_1d_bearish and cond_5m_overbought:
-            reason = (f"做空B | 4h空头 MA7={ma7_4h:.1f}<{price:.1f} MACD={macd_4h:.2f}<0 | "
+        if cond_4h_bearish and cond_1d_bearish and cond_5m_overbought and cond_adx_timing:
+            reason = (f"做空B | 4h空头 ADX={adx_4h:.1f}<40 MA7={ma7_4h:.1f}<{price:.1f} MACD={macd_4h:.2f}<0 | "
                       f"1d空头 | 5m反弹压力 pct_b={pct_b:.3f} RSI={rsi:.1f}>=82 ADX={adx:.1f}>25 vol={vol_ratio:.2f}x")
             return 'short_b', reason
         
