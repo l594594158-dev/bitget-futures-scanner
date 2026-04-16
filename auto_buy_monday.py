@@ -122,12 +122,12 @@ def main():
     balance = get_balance(api)
     print(f"\n💰 USDT 余额: {balance:.2f}")
 
-    if balance < 10:
-        print("❌ 余额不足 (< 10 USDT)")
+    if balance < 15:
+        print("❌ 余额不足 (< 15 USDT)")
         sys.exit(1)
 
-    # 5. 执行买入（10U试仓）
-    buy_amount = min(10.0, balance * 0.95)
+    # 5. 执行买入（15U）
+    buy_amount = min(15.0, balance * 0.95)
     print(f"\n✅ 执行市价买入: {buy_amount:.2f} USDT × {best['symbol']}")
 
     result = market_buy(api, best['symbol'], buy_amount)
