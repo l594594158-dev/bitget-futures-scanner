@@ -2,7 +2,7 @@
 """
 Bitget 美股现货交易机器人 - 修复版 v2
 =====================================
-美股时段每5分钟扫描，15U开仓，自动买卖，推送通知
+美股时段每5分钟扫描，40U开仓，自动买卖，推送通知
 """
 
 import requests
@@ -27,7 +27,7 @@ PASSPHRASE = "liugang123"
 BASE_URL = "https://api.bitget.com"
 
 # 每笔开仓金额 (USDT) - 最低2U
-POSITION_SIZE = 15
+POSITION_SIZE = 40
 
 # 扫描间隔 (秒) - 美股时段10分钟
 SCAN_INTERVAL = 600
