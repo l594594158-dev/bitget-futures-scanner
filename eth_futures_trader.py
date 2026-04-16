@@ -52,7 +52,7 @@ class Config:
     
     # 仓位
     LEVERAGE = 20
-    SIZE = 0.015  # ETH数量
+    SIZE = 0.5  # ETH数量
     MARGIN_RATIO = 0.05  # 保证金比例 5%（20x杠杆对应5%保证金）
     
     # 止盈止损（固定百分比）
@@ -220,7 +220,7 @@ class BitgetFuturesAPI:
             "tradeSide": "open",
             "orderType": order_type,
             "size": size,
-            "marginMode": "crossed",
+            "marginMode": "isolated",
             "leverage": str(self.config.LEVERAGE)
         }
         if price:
@@ -266,7 +266,7 @@ class BitgetFuturesAPI:
             "tradeSide": "close",
             "orderType": "market",
             "size": close_size,
-            "marginMode": "crossed",
+            "marginMode": "isolated",
             "posSide": pos_side
         })
     

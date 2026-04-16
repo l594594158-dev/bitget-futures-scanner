@@ -13,7 +13,7 @@
 | 标的 | ETH/USDT（Bitget U本位永续合约） |
 | 交易类型 | 合约（不做现货） |
 | 杠杆 | 20x |
-| 每笔数量 | 0.015 ETH（约35U） |
+| 每笔数量 | 0.5 ETH（约35U） |
 | 止损 | 1.5%（固定） |
 | 止盈 | 2.0%（固定，全仓一次性） |
 | 扫描周期 | 10秒/轮 |
@@ -122,7 +122,7 @@
 | 杠杆 | 20x | 20x |
 | 数量 | 0.015 ETH | 0.015 ETH |
 | 委托类型 | 市价单market | 市价单market |
-| marginMode | crossed（全仓） | crossed（全仓） |
+| marginMode | isolated（逐仓） | isolated（逐仓） |
 
 ---
 
