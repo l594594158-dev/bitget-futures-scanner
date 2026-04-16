@@ -2,7 +2,7 @@
 """
 Bitget 美股现货交易机器人 - 修复版 v2
 =====================================
-美股时段每5分钟扫描，25U开仓，自动买卖，推送通知
+美股时段每5分钟扫描，15U开仓，自动买卖，推送通知
 """
 
 import requests
@@ -27,20 +27,33 @@ PASSPHRASE = "liugang123"
 BASE_URL = "https://api.bitget.com"
 
 # 每笔开仓金额 (USDT) - 最低2U
-POSITION_SIZE = 25
+POSITION_SIZE = 15
 
 # 扫描间隔 (秒) - 美股时段10分钟
 SCAN_INTERVAL = 600
 
-# 交易标的 - Bitget实际存在的美股标的
+# 交易标的 - 全部代币化美股(17个)
 SYMBOLS = {
+    # 个股
     "TSLAONUSDT": {"name": "Tesla", "stop_loss": 0.08},
     "NVDAONUSDT": {"name": "Nvidia", "stop_loss": 0.08},
     "AAPLONUSDT": {"name": "Apple", "stop_loss": 0.05},
     "METAONUSDT": {"name": "Meta", "stop_loss": 0.05},
     "AMZNONUSDT": {"name": "Amazon", "stop_loss": 0.05},
     "GOOGLONUSDT": {"name": "Google", "stop_loss": 0.05},
+    "MSFTONUSDT": {"name": "Microsoft", "stop_loss": 0.05},
     "AMDONUSDT": {"name": "AMD", "stop_loss": 0.06},
+    # 指数ETF
+    "SPYONUSDT": {"name": "S&P500 ETF", "stop_loss": 0.05},
+    "IVVONUSDT": {"name": "S&P500 ETF", "stop_loss": 0.05},
+    "QQQONUSDT": {"name": "Nasdaq ETF", "stop_loss": 0.06},
+    "IWMONUSDT": {"name": "Russell2000 ETF", "stop_loss": 0.06},
+    "ITOTONUSDT": {"name": "Total Market ETF", "stop_loss": 0.05},
+    # 商品
+    "IAUONUSDT": {"name": "Gold ETF", "stop_loss": 0.04},
+    "SLVONUSDT": {"name": "Silver ETF", "stop_loss": 0.05},
+    # 其他
+    "KATUSDT": {"name": "Katana", "stop_loss": 0.10},
     "CVXUSDT": {"name": "Chevron", "stop_loss": 0.05},
 }
 
@@ -139,6 +152,17 @@ class BitgetAPI:
         except Exception as e:
             logger.error(f"获取余额失败: {e}")
         return 0.0
+
+    def get_coin_balance(self, coin: str) -> float:
+        """获取指定币种可用余额"""
+        try:
+            data = self._request("GET", "/api/v2/spot/account/assets")
+            for item in data:
+                if item.get("coin") == coin:
+                    return float(item.get("available", "0"))
+        except Exception as e:
+            logger.error(f"获取{coin}余额失败: {e}")
+        return 0.0
     
     def get_klines(self, symbol: str, limit: int = 100) -> List[Dict]:
         """获取K线数据"""
@@ -184,14 +208,14 @@ class BitgetAPI:
             logger.error(f"获取行情失败 {symbol}: {e}")
         return None
     
-    def place_order(self, symbol: str, side: str, size_usdt: float) -> Optional[str]:
-        """下单 - size是USDT金额"""
+    def place_order(self, symbol: str, side: str, size: float) -> Optional[str]:
+        """下单 - buy时size是USDT金额，sell时size是标的数量"""
         try:
             body = {
                 "symbol": symbol,
                 "side": side,
                 "orderType": "market",
-                "size": str(round(size_usdt, 2))  # USDT金额，最低2U
+                "size": str(round(size, 6))  # 买入=USDT金额，卖出=实际数量
             }
             result = self._request("POST", "/api/v2/spot/trade/place-order", body)
             
@@ -520,9 +544,21 @@ class TradingBot:
                     if should_sell:
                         pos = self.pm.positions.get(symbol)
                         if pos:
-                            # 卖出入场金额的U
-                            sell_size = pos['size_usdt']
-                            order_id = self.api.place_order(symbol, "sell", sell_size)
+                            # 卖出数量 = 实际持有量（修复：查真实余额，不超过持仓）
+                            base_coin = symbol.replace("USDT", "")
+                            available = self.api.get_coin_balance(base_coin)
+                            if available < 0.0001:
+                                logger.warning(f"{symbol} 实际余额不足，跳过卖出")
+                                self.pm.remove_position(symbol)
+                                continue
+                            sell_qty = round(min(available, pos['quantity']), 3)
+                            sell_value = sell_qty * current_price
+                            # 小于最小下单金额1U，跳过实际卖出
+                            if sell_value < 1:
+                                logger.warning(f"{symbol} 持仓价值${sell_value:.2f}<1U，跳过卖出并清理记录")
+                                self.pm.remove_position(symbol)
+                                continue
+                            order_id = self.api.place_order(symbol, "sell", sell_qty)
                             if order_id:
                                 self.pm.remove_position(symbol)
                                 sell_count += 1
