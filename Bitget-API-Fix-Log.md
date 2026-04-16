@@ -384,3 +384,53 @@ if result.get("code") in ("40009", "40037", "40404"):
 - `bitget_trading_bot_main.py` 中 `BitgetAPI(self.config)` → `BitgetAPI(self.config, self.logger)`
 
 #### 状态：✅ 已修复并测试通过
+
+---
+
+## [2026-04-16 17:00 GMT+8] 第17次修复记录
+
+### 问题17：ETH合约API深度修复
+
+**文件**：`eth_futures_trader.py`（新建）
+
+#### 17.1 关键发现：API路径用连字符
+
+| 接口 | 错误路径 | 正确路径 |
+|------|---------|---------|
+| 下单 | `/api/v2/mix/order/placeOrder` | `/api/v2/mix/order/place-order` |
+| 杠杆 | `/api/v2/mix/account/setLeverage` | `/api/v2/mix/account/set-leverage` |
+| 持仓 | 全部404 | 通过 `fills` 历史推算 |
+
+#### 17.2 合约下单参数结构（正确）
+```python
+{
+    'symbol': 'ETHUSDT',
+    'productType': 'usdt-futures',
+    'marginCoin': 'USDT',
+    'side': 'buy',           # buy=做多, sell=做空
+    'tradeSide': 'open',     # open=开仓, close=平仓
+    'orderType': 'market',
+    'size': '0.015',
+    'marginMode': 'crossed', # 必填
+    'leverage': '20',
+    'presetStopSurplusPrice': '2388.67',  # 止盈
+    'presetStopLossPrice': '2302.72'       # 止损
+}
+```
+
+#### 17.3 平仓参数（关键）
+- 平仓用 `tradeSide=close`，不是单独的 closePosition 接口
+- 需要指定 `posSide`: 'long' 或 'short'
+- 平仓数量要匹配实际持仓，否则 22002
+
+#### 17.4 持仓查询（无直接接口）
+- 通过 `/api/v2/mix/order/fills` 历史成交计算净持仓
+- `LONG += buy open`, `LONG -= sell close`
+- `SHORT += sell open`, `SHORT -= buy close`
+
+#### 17.5 开仓验证成功
+- 0.015 ETH LONG @ ~2340，止盈2%+止损1.5%
+- 成交后 unrealizedPL=+0.0041 USDT
+- 合约账户 USDT 可用: 9.79
+
+#### 状态：✅ 全部修复验证完成
