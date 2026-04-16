@@ -1,47 +1,22 @@
 {
-  "NVDAONUSDT": {
-    "entry_price": 176.75,
-    "stop_loss": 0.08,
+  "IAUONUSDT": {
+    "entry_price": 89.1,
+    "stop_loss": 0.04,
     "size_usdt": 25,
-    "quantity": 0.14144271570014144,
-    "entry_time": "2026-04-06T22:36:30.694950",
-    "highest_price": 189.63,
-    "trailing_stop": 183.94109999999998
-  },
-  "AAPLONUSDT": {
-    "entry_price": 262.46,
-    "stop_loss": 0.05,
-    "size_usdt": 25,
-    "quantity": 0.09525260992151185,
-    "entry_time": "2026-04-06T22:36:33.927910",
-    "highest_price": 262.8,
-    "trailing_stop": 249.33699999999996
+    "quantity": 0.28,
+    "entry_time": "2026-04-14T01:02:03.994146",
+    "highest_price": 91.07,
+    "trailing_stop": 85.4592,
+    "note": "持仓中，未平仓"
   },
   "METAONUSDT": {
-    "entry_price": 577.98,
+    "entry_price": 677.68,
     "stop_loss": 0.05,
-    "size_usdt": 25,
-    "quantity": 0.04325409183708779,
-    "entry_time": "2026-04-06T22:36:37.408012",
-    "highest_price": 637.93,
-    "trailing_stop": 606.0334999999999
-  },
-  "GOOGLONUSDT": {
-    "entry_price": 298.22,
-    "stop_loss": 0.05,
-    "size_usdt": 25,
-    "quantity": 0.08383072899201931,
-    "entry_time": "2026-04-06T22:59:50.632062",
-    "highest_price": 322.26,
-    "trailing_stop": 306.147
-  },
-  "TSLAONUSDT": {
-    "entry_price": 347.41,
-    "stop_loss": 0.08,
-    "size_usdt": 25,
-    "quantity": 0.07196108344607235,
-    "entry_time": "2026-04-10T23:07:47.702748",
-    "highest_price": 347.41,
-    "trailing_stop": 319.6172
+    "size_usdt": 15.0,
+    "quantity": 0.022,
+    "entry_time": "2026-04-16T15:30:41",
+    "highest_price": 677.68,
+    "trailing_stop": 643.8,
+    "note": "周一自动买入"
   }
 }

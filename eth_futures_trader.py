@@ -164,63 +164,63 @@ class BitgetFuturesAPI:
         return data[0] if isinstance(data, list) and data else {}
     
     def get_positions(self) -> List[Dict]:
-        """获取持仓（通过账户快照 + 成交历史推算）"""
+        """获取持仓（通过 unrealizedPL + 成交历史）
+        unrealized > 0 → 多头持仓
+        unrealized < 0 → 空头持仓
+        """
         try:
-            # 账户快照
-            acct = self._request("GET", "/api/v2/mix/account/accounts", {
-                "symbol": self.config.SYMBOL,
-                "productType": self.config.PRODUCT_TYPE
-            })
-            if not acct:
+            acct = self.get_account()
+            unrealized = float(acct.get('unrealizedPL', '0'))
+            if abs(unrealized) < 0.0001:
                 return []
             
-            # 通过成交历史计算持仓
+            # 有持仓，通过成交历史计算数量
             fills_data = self._request("GET", "/api/v2/mix/order/fills", {
                 "symbol": self.config.SYMBOL,
                 "productType": self.config.PRODUCT_TYPE,
-                "limit": "100"
+                "limit": "50"
             })
             fills = fills_data.get('fillList', []) if isinstance(fills_data, dict) else []
             
-            long_qty = 0.0
-            short_qty = 0.0
+            long_qty = short_qty = 0.0
             for f in fills:
                 vol = float(f.get('baseVolume', 0))
-                if f.get('tradeSide') == 'open':
-                    if f.get('side') == 'buy':
-                        long_qty += vol
-                    else:
-                        short_qty += vol
-                else:
-                    if f.get('side') == 'sell':
-                        long_qty -= vol
-                    else:
-                        short_qty -= vol
+                if f.get('side') == 'buy' and f.get('tradeSide') == 'open':
+                    long_qty += vol
+                elif f.get('side') == 'sell' and f.get('tradeSide') == 'open':
+                    short_qty += vol
+                elif f.get('side') == 'sell' and f.get('tradeSide') == 'close':
+                    long_qty -= vol
+                elif f.get('side') == 'buy' and f.get('tradeSide') == 'close':
+                    short_qty -= vol
             
+            # 持仓量为正时才是真实持仓
             positions = []
-            if long_qty > 0.0001:
+            if unrealized > 0 and long_qty > 0.001:
                 positions.append({'side': 'long', 'size': f'{round(long_qty, 4):.4f}'})
-            if short_qty > 0.0001:
-                positions.append({'side': 'short', 'size': f'{round(short_qty, 4):.4f}'})
+            elif unrealized < 0 and short_qty < -0.001:  # short_qty是负数
+                positions.append({'side': 'short', 'size': f'{round(abs(short_qty), 4):.4f}'})
             return positions
         except:
             return []
     
-    def place_order(self, side: str, order_type: str = "market", 
+    def place_order(self, direction: str, order_type: str = "market",
                    size: str = None, price: str = None,
                    stop_surplus_price: float = None, stop_loss_price: float = None) -> Dict:
-        """下单（需交易权限）
-        side: open_long / open_short / close_long / close_short
-        order_type: market / limit
+        """下单
+        direction: 'long' or 'short'
+        order_type: 'market' or 'limit'
         """
         size = size or str(self.config.SIZE)
         body = {
             "symbol": self.config.SYMBOL,
             "productType": self.config.PRODUCT_TYPE,
             "marginCoin": self.config.MARGIN_COIN,
-            "side": side,
+            "side": "buy" if direction == "long" else "sell",
+            "tradeSide": "open",
             "orderType": order_type,
             "size": size,
+            "marginMode": "crossed",
             "leverage": str(self.config.LEVERAGE)
         }
         if price:
@@ -229,17 +229,34 @@ class BitgetFuturesAPI:
             body["presetStopSurplusPrice"] = str(stop_surplus_price)
         if stop_loss_price:
             body["presetStopLossPrice"] = str(stop_loss_price)
-        
+
         return self._request("POST", "/api/v2/mix/order/place-order", body=body)
     
     def close_position(self, pos_side: str = None) -> Dict:
-        """市价平仓（需交易权限）"""
-        # 先查持仓，再决定平哪个方向
+        """市价平仓（需交易权限）
+        自动判断方向: unrealizedPL>0=多头, unrealizedPL<0=空头
+        """
+        # 检查是否有持仓
+        acct = self.get_account()
+        unrealized = float(acct.get('unrealizedPL', '0'))
+        if abs(unrealized) < 0.0001:
+            raise Exception("No position to close")
+        
+        # 自动判断方向
         if pos_side is None:
-            positions = self.get_positions()
-            if not positions:
-                raise Exception("No position to close")
-            pos_side = positions[0]['side']
+            pos_side = "long" if unrealized > 0 else "short"
+        
+        # 先查持仓量，用成交历史推算
+        positions = self.get_positions()
+        close_size = None
+        for p in positions:
+            if p['side'] == pos_side:
+                close_size = str(round(float(p['size']) + 0.005, 4))
+                break
+        
+        # 如果算不出持仓量，用配置的SIZE
+        if close_size is None:
+            close_size = str(self.config.SIZE)
         
         return self._request("POST", "/api/v2/mix/order/place-order", body={
             "symbol": self.config.SYMBOL,
@@ -248,7 +265,7 @@ class BitgetFuturesAPI:
             "side": "sell" if pos_side == "long" else "buy",
             "tradeSide": "close",
             "orderType": "market",
-            "size": str(self.config.SIZE),
+            "size": close_size,
             "marginMode": "crossed",
             "posSide": pos_side
         })
