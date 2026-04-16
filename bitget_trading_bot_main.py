@@ -10,7 +10,7 @@ class TradingBot:
         self.logger = Logger("TradingBot", self.config.LOG_FILE)
         
         # 初始化API
-        self.api = BitgetAPI(self.config)
+        self.api = BitgetAPI(self.config, self.logger)
         
         # 初始化信号生成器
         self.signals = TradingSignals(self.config)
@@ -313,7 +313,7 @@ class TradingTask:
     def __init__(self):
         self.config = Config()
         self.logger = Logger("TradingTask", self.config.LOG_FILE)
-        self.api = BitgetAPI(self.config)
+        self.api = BitgetAPI(self.config, self.logger)
     
     def run_market_scan(self):
         """盘前/盘后扫描"""

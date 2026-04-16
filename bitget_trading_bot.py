@@ -163,9 +163,10 @@ class Logger:
 class BitgetAPI:
     """Bitget API 封装"""
     
-    def __init__(self, config: Config):
+    def __init__(self, config: Config, logger=None):
         self.config = config
         self.base_url = config.BASE_URL
+        self.logger = logger
         self.headers = {
             "Content-Type": "application/json",
             "ACCESS-KEY": config.API_KEY,
@@ -214,11 +215,91 @@ class BitgetAPI:
 
         result = response.json()
 
+        # 已知错误码自动修复尝试
+        if result.get("code") in ("40009", "40037", "40404"):
+            fixed = self._try_fix(timestamp, method, path, params, body, result.get("code"))
+            if fixed is not None:
+                return fixed
+
         if result.get("code") != "00000":
             raise Exception(f"API Error: {result.get('msg', 'Unknown error')}")
 
         return result.get("data", {})
-    
+
+    def _try_fix(self, timestamp: str, method: str, path: str, params: Dict, body: Dict, error_code: str) -> Optional[Dict]:
+        """自动修复已知API错误并重试"""
+        body_str = json.dumps(body) if body else ""
+
+        # 40009: 签名错误 → 尝试切换 base64 ↔ hex 编码
+        if error_code == "40009":
+            current = getattr(self, '_sig_encoding', 'base64')
+            for alt in ['base64', 'hex']:
+                if alt == current:
+                    continue
+                if alt == 'base64':
+                    sig = base64.b64encode(hmac.new(self.config.API_SECRET.encode('utf-8'),
+                        (timestamp + method + path + body_str).encode('utf-8'), hashlib.sha256).digest()).decode()
+                else:
+                    sig = hmac.new(self.config.API_SECRET.encode('utf-8'),
+                        (timestamp + method + path + body_str).encode('utf-8'), hashlib.sha256).hexdigest()
+                headers = self.headers.copy()
+                headers["ACCESS-SIGN"] = sig
+                headers["ACCESS-TIMESTAMP"] = timestamp
+                url = self.base_url + path
+                try:
+                    resp = requests.get(url, headers=headers, params=params) if method == "GET" \
+                        else requests.post(url, headers=headers, data=body_str)
+                    r = resp.json()
+                    if r.get("code") == "00000":
+                        self._sig_encoding = alt
+                        self.logger and self.logger.info(f"[自动修复] {path} 签名切为 {alt} ✓")
+                        return r.get("data", {})
+                except:
+                    continue
+
+        # 40404: 端点不存在 → 尝试已知替代路径
+        if error_code == "40404":
+            alts = {
+                '/api/v2/spot/orders/pending': ['/api/v2/spot/orders/active', '/api/v2/spot/orders'],
+                '/api/v2/spot/position/ticket': ['/api/v2/spot/positions'],
+            }
+            for old, paths in alts.items():
+                if path == old:
+                    for alt_path in paths:
+                        url = self.base_url + alt_path
+                        sig = self._sign(timestamp, method, alt_path, body_str)
+                        headers = {**self.headers, "ACCESS-SIGN": sig, "ACCESS-TIMESTAMP": timestamp}
+                        try:
+                            resp = requests.get(url, headers=headers, params=params) if method == "GET" \
+                                else requests.post(url, headers=headers, data=body_str)
+                            r = resp.json()
+                            if r.get("code") == "00000":
+                                self._endpoint_fixes = getattr(self, '_endpoint_fixes', {})
+                                self._endpoint_fixes[path] = alt_path
+                                self.logger and self.logger.info(f"[自动修复] {path} → {alt_path} ✓")
+                                return r.get("data", {})
+                        except:
+                            continue
+
+        # 40037: API Key无效 → 尝试hex签名（部分旧API兼容）
+        if error_code == "40037":
+            self.logger and self.logger.warning(f"[严重] API Key无效，尝试hex签名重试...")
+            sig = hmac.new(self.config.API_SECRET.encode('utf-8'),
+                (timestamp + method + path + body_str).encode('utf-8'), hashlib.sha256).hexdigest()
+            headers = {**self.headers, "ACCESS-SIGN": sig, "ACCESS-TIMESTAMP": timestamp}
+            url = self.base_url + path
+            try:
+                resp = requests.get(url, headers=headers, params=params) if method == "GET" \
+                    else requests.post(url, headers=headers, data=body_str)
+                r = resp.json()
+                if r.get("code") == "00000":
+                    self.logger and self.logger.info(f"[自动修复] 40037 切hex签名成功 ✓")
+                    return r.get("data", {})
+            except Exception:
+                self.logger and self.logger.warning(f"[自动修复] 40037 重试失败")
+
+        return None
+
     def get_account_info(self) -> Dict:
         """获取账户信息（正确的Assets端点）"""
         return self._request("GET", "/api/v2/spot/account/assets")
