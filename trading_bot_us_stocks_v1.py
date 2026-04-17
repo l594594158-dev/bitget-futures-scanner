@@ -552,9 +552,19 @@ class TradingBot:
                 
                 # 无持仓时买入
                 else:
+                    # ========== 黑名单 & 持仓上限保护 ==========
+                    blacklist = ["METAONUSDT"]  # 禁止买入
+                    if symbol in blacklist:
+                        continue  # 黑名单，跳过
+                    # 持仓价值>=50U，禁止加仓（无持仓时此处symbol in positions恒为False）
+                    if symbol in self.pm.positions:
+                        pos = self.pm.positions[symbol]
+                        pos_value = pos['quantity'] * current_price
+                        if pos_value >= 50:
+                            logger.info(f"{symbol} 持仓价值{pos_value:.2f}U>=50，跳过")
+                            continue
                     if balance < POSITION_SIZE:
                         continue
-                    
                     if total_score >= 4 and news_score_capped >= -1:
                         # 下单金额
                         order_id = self.api.place_order(symbol, "buy", POSITION_SIZE)
