@@ -461,8 +461,10 @@ class CandleData:
         # ATR
         atr = self.ti.atr(highs, lows, closes, 14)
         
-        # ADX
-        adx = self.ti.adx(highs, lows, closes, 14)
+        # ADX（需要降序数据：最新在前）
+        # Bug修复：ADX的方向移动计算依赖最新数据在前，K线是升序排列，需翻转
+        # 翻转后：adx[0] = 最新K线的ADX值
+        adx = self.ti.adx(highs[::-1], lows[::-1], closes[::-1], 14)
         
         latest = df.iloc[-1]
         current_price = latest['close']
