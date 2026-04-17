@@ -68,7 +68,7 @@ class Config:
     PAUSE_MINUTES = 30
     
     # ADX过滤
-    ADX_THRESHOLD = 25
+    ADX_THRESHOLD = 20
     
     # 成交量过滤
     VOLUME_RATIO_THRESHOLD = 1.5
@@ -496,101 +496,188 @@ class CandleData:
 
 # ==================== 信号分析 ====================
 class SignalAnalyzer:
-    """分析是否触发交易信号"""
-    
+    """分析是否触发交易信号
+    基于BTC评分制：综合评分 >= 6 买入，<= -6 卖出
+    参考: trading_bot.py 的综合评分系统
+    """
+
     def __init__(self, candle_data: CandleData):
         self.candle = candle_data
-    
-    def is_ma_bullish(self, ind: Dict) -> bool:
-        """均线多头: MA7 > price"""
-        return ind['ma7'] > ind['close']
-    
-    def is_ma_bearish(self, ind: Dict) -> bool:
-        """均线空头: MA7 < price"""
-        return ind['ma7'] < ind['close']
-    
+
+    def _compute_score(self, ind: Dict, prev_ind: Dict = None) -> Tuple[int, List[str]]:
+        """计算综合评分（BTC评分制）
+        返回: (score, 信号列表)
+        """
+        score = 0
+        signals = []
+
+        price = ind['close']
+        rsi = ind['rsi']
+        pct_b = ind['percent_b']
+        adx = ind['adx']
+        macd_hist = ind['macd_hist']
+
+        # === 1. MA趋势评分 (MA7 作为短期均线) ===
+        ma7 = ind['ma7']
+        if ma7 > price:
+            # MA7在价格上方 → 价格在均线下方 → 下跌趋势 → 空头信号
+            score -= 1
+            signals.append(f"MA7空头(MA7={ma7:.1f}>price)")
+        elif ma7 < price:
+            # MA7在价格下方 → 价格在均线上方 → 上涨趋势 → 多头信号
+            score += 1
+            signals.append(f"MA7多头(MA7={ma7:.1f}<price)")
+
+        # === 2. RSI评分 (BTC制: <35超卖, 35-50偏弱, >60偏强, >70超买) ===
+        if rsi < 35:
+            score += 2
+            signals.append(f"RSI超卖({rsi:.1f})")
+        elif rsi < 45:
+            score += 1
+            signals.append(f"RSI偏弱({rsi:.1f})")
+        elif rsi > 70:
+            score -= 2
+            signals.append(f"RSI超买({rsi:.1f})")
+        elif rsi > 60:
+            score -= 1
+            signals.append(f"RSI偏强({rsi:.1f})")
+
+        # === 3. MACD评分 (BTC制: 金叉+2, 死叉-2, 扩张+1, 收缩-1) ===
+        if prev_ind is not None:
+            prev_hist = prev_ind['macd_hist']
+            if prev_hist <= 0 and macd_hist > 0:
+                score += 2
+                signals.append("MACD金叉")
+            elif prev_hist >= 0 and macd_hist < 0:
+                score -= 2
+                signals.append("MACD死叉")
+            elif macd_hist > 0 and macd_hist > prev_hist:
+                score += 1
+                signals.append("MACD扩张")
+            elif macd_hist < 0 and macd_hist < prev_hist:
+                score -= 1
+                signals.append("MACD收缩")
+
+        # === 4. 布林带位置评分 ===
+        if pct_b < 0.2:
+            # 价格在布林下轨附近 → 超卖 → 多头信号
+            score += 1
+            signals.append(f"布林下轨({pct_b:.3f})")
+        elif pct_b > 0.85:
+            # 价格在布林上轨附近 → 超买 → 空头信号
+            score -= 1
+            signals.append(f"布林上轨({pct_b:.3f})")
+
+        return score, signals
+
     def check(self) -> Tuple[Optional[str], str]:
         """检查是否触发信号
-        返回: (信号类型, 描述)
-        信号类型: 'long_a' / 'long_b' / 'short_a' / 'short_b' / None
+        基于BTC综合评分制:
+        - 综合评分 >= 6: 买入信号
+        - 综合评分 <= -6: 卖出信号
+        - ADX < 20: 震荡市，不过度交易
         """
         ind_5m = self.candle.compute_indicators('5m')
         ind_1H = self.candle.compute_indicators('1H')
-        ind_4H = self.candle.compute_indicators('4H')
-        ind_1D = self.candle.compute_indicators('1D')
-        
-        if not all([ind_5m, ind_1H, ind_4H, ind_1D]):
+
+        if not ind_5m or not ind_1H:
             return None, "K线数据不足"
-        
+
         price = ind_5m['close']
-        rsi = ind_5m['rsi']
-        pct_b = ind_5m['percent_b']
-        adx = ind_5m['adx']
+        adx_1h = ind_1H['adx']
+        adx_5m = ind_5m['adx']
         vol_ratio = ind_5m['volume_ratio']
-        
-        ma7_4h = ind_4H['ma7']
-        ma7_1d = ind_1D['ma7']
-        macd_4h = ind_4H['macd']
-        macd_1d = ind_1D['macd']
-        macd_5m = ind_5m['macd']
-        adx_4h = ind_4H['adx']
-        
-        # 风控过滤
-        if ind_1H['adx'] < 25:
-            return None, f"1h ADX={ind_1H['adx']:.1f}<25 震荡市"
-        if vol_ratio < 1.5:
-            return None, f"缩量 vol_ratio={vol_ratio:.2f}<1.5"
-        
-        # === 做多A: 大周期空头 + 5m超卖反弹 ===
-        # 4h空头: MA7 < price AND MACD < 0
-        # 1d空头: MA7 < price AND MACD < 0
-        # 5m: %b<0.2 AND RSI<40 AND ADX>25 AND vol_ratio>1.5
-        cond_4h_bearish = ma7_4h < price and macd_4h < 0
-        cond_1d_bearish = ma7_1d < price and macd_1d < 0
-        cond_5m_oversold = pct_b < 0.2 and rsi < 40 and adx > 25 and vol_ratio >= 1.5
-        
-        # 逆势信号需要4h ADX < 40（趋势不够强，反转概率高）
-        cond_adx_timing = adx_4h < 40
-        
-        if cond_4h_bearish and cond_1d_bearish and cond_5m_oversold and cond_adx_timing:
-            reason = (f"做多A | 4h空头 ADX={adx_4h:.1f}<40 MA7={ma7_4h:.1f}<{price:.1f} MACD={macd_4h:.2f}<0 | "
-                      f"1d空头 | 5m超卖 pct_b={pct_b:.3f} RSI={rsi:.1f} ADX={adx:.1f}>25 vol={vol_ratio:.2f}x")
-            return 'long_a', reason
-        
-        # === 做多B: 大周期多头 + 5m回调支撑 ===
-        # 4h多头: MA7 > price AND MACD > 0
-        # 1d多头: MA7 > price AND MACD > 0
-        # 5m: %b<0.2 AND RSI>35 且 <60 AND ADX>25 AND vol_ratio>1.5
-        cond_4h_bullish = ma7_4h > price and macd_4h > 0
-        cond_1d_bullish = ma7_1d > price and macd_1d > 0
-        cond_5m_pullback = pct_b < 0.2 and 35 < rsi < 60 and adx > 25 and vol_ratio >= 1.5
-        
-        if cond_4h_bullish and cond_1d_bullish and cond_5m_pullback:
-            reason = (f"做多B | 4h多头 MA7={ma7_4h:.1f}>{price:.1f} MACD={macd_4h:.2f}>0 | "
-                      f"1d多头 | 5m回调 pct_b={pct_b:.3f} RSI={rsi:.1f}(35~60) ADX={adx:.1f}>25 vol={vol_ratio:.2f}x")
-            return 'long_b', reason
-        
-        # === 做空A: 大周期多头 + 5m超买 ===
-        # 4h多头: MA7 > price AND MACD > 0
-        # 1d多头: MA7 > price AND MACD > 0
-        # 5m: %b>0.85 AND RSI>=82 AND ADX>25 AND vol_ratio>1.5
-        cond_5m_overbought = pct_b > 0.85 and rsi >= 82 and adx > 25 and vol_ratio >= 1.5
-        
-        if cond_4h_bullish and cond_1d_bullish and cond_5m_overbought:
-            reason = (f"做空A | 4h多头 MA7={ma7_4h:.1f}>{price:.1f} MACD={macd_4h:.2f}>0 | "
-                      f"1d多头 | 5m超买 pct_b={pct_b:.3f} RSI={rsi:.1f}>=82 ADX={adx:.1f}>25 vol={vol_ratio:.2f}x")
-            return 'short_a', reason
-        
-        # === 做空B: 大周期空头 + 5m反弹压力 ===
-        # 4h空头: MA7 < price AND MACD < 0
-        # 1d空头: MA7 < price AND MACD < 0
-        # 5m: %b>0.85 AND RSI>=82 AND ADX>25 AND vol_ratio>1.5
-        if cond_4h_bearish and cond_1d_bearish and cond_5m_overbought and cond_adx_timing:
-            reason = (f"做空B | 4h空头 ADX={adx_4h:.1f}<40 MA7={ma7_4h:.1f}<{price:.1f} MACD={macd_4h:.2f}<0 | "
-                      f"1d空头 | 5m反弹压力 pct_b={pct_b:.3f} RSI={rsi:.1f}>=82 ADX={adx:.1f}>25 vol={vol_ratio:.2f}x")
-            return 'short_b', reason
-        
-        return None, f"无信号 | price={price:.2f} pct_b={pct_b:.2f} RSI={rsi:.1f} ADX={adx:.1f} vol={vol_ratio:.2f}"
+
+        # === 风控过滤 ===
+        # ADX < 20: 震荡市，不交易
+        if adx_1h < 20:
+            return None, f"ADX={adx_1h:.1f}<20 震荡市"
+
+        # === 计算5m综合评分 ===
+        # 需要前一根K线用于MACD金叉/死叉判断
+        df_5m = self.candle.candles.get('5m')
+        if df_5m is not None and len(df_5m) >= 2:
+            prev_ind_5m = {
+                'close': df_5m.iloc[-2]['close'],
+                'rsi': self._calc_rsi_slice(df_5m['close'].values, -2),
+                'macd_hist': self._calc_macd_hist_slice(df_5m['close'].values, -2),
+                'ma7': df_5m['close'].iloc[-2:-1].mean() if len(df_5m) >= 7 else df_5m.iloc[-2]['close'],
+                'percent_b': 0.5,  # 简化
+            }
+        else:
+            prev_ind_5m = None
+
+        score, signals = self._compute_score(ind_5m, prev_ind_5m)
+
+        # === 成交量加成（软过滤，不强制） ===
+        vol_bonus = ""
+        if vol_ratio >= 1.5:
+            score += 1  # 放量额外加分
+            vol_bonus = f" 放量(+1)"
+        elif vol_ratio < 0.5:
+            score -= 1  # 缩量减分
+            vol_bonus = f" 缩量(-1)"
+
+        # === ADX方向加成 ===
+        if adx_5m > 30:
+            if score > 0:
+                score += 1  # 强趋势多头
+                signals.append(f"强趋势ADX={adx_5m:.1f}(+1)")
+            elif score < 0:
+                score -= 1  # 强趋势空头
+
+        # === 趋势方向确认（基于1H MA） ===
+        ma7_1h = ind_1H['ma7']
+        price_1h = ind_1H['close']
+        if ma7_1h > price_1h and score > 0:
+            score += 1  # 1H空头 + 5m多头 = 逆势反弹加分
+            signals.append("逆势反弹(+1)")
+        elif ma7_1h < price_1h and score > 0:
+            score += 1  # 1H多头 + 5m多头 = 顺势做多加分
+            signals.append("顺势做多(+1)")
+        elif ma7_1h < price_1h and score < 0:
+            score -= 1  # 1H多头 + 5m空头 = 逆势做空加分
+            signals.append("逆势做空(-1)")
+        elif ma7_1h > price_1h and score < 0:
+            score -= 1  # 1H空头 + 5m空头 = 顺势做空加分
+            signals.append("顺势做空(-1)")
+
+        # === 最终信号判定 ===
+        signal_str = " ".join(signals) + vol_bonus
+
+        if score >= 6:
+            reason = (f"买入(评分={score}) | {signal_str} | "
+                      f"price={price:.2f} RSI={ind_5m['rsi']:.1f} ADX={adx_5m:.1f} vol={vol_ratio:.2f}x")
+            return 'long', reason
+        elif score <= -6:
+            reason = (f"卖出(评分={score}) | {signal_str} | "
+                      f"price={price:.2f} RSI={ind_5m['rsi']:.1f} ADX={adx_5m:.1f} vol={vol_ratio:.2f}x")
+            return 'short', reason
+        else:
+            return None, f"无信号(评分={score}) | {signal_str} | price={price:.2f} RSI={ind_5m['rsi']:.1f} ADX={adx_5m:.1f} vol={vol_ratio:.2f}x"
+
+    def _calc_rsi_slice(self, closes: np.ndarray, idx: int) -> float:
+        """计算指定索引的RSI（简化）"""
+        if idx < 1:
+            return 50.0
+        delta = np.diff(closes[:idx+1], prepend=closes[0])
+        gains = np.where(delta > 0, delta, 0)
+        losses = np.where(delta < 0, -delta, 0)
+        avg_gain = pd.Series(gains).ewm(alpha=1/14).mean().values[-1]
+        avg_loss = pd.Series(losses).ewm(alpha=1/14).mean().values[-1]
+        rs = avg_gain / (avg_loss + 1e-10)
+        return 100 - (100 / (rs + 1))
+
+    def _calc_macd_hist_slice(self, closes: np.ndarray, idx: int) -> float:
+        """计算指定索引的MACD柱状图（简化）"""
+        if idx < 26:
+            return 0.0
+        data = closes[:idx+1]
+        ema12 = pd.Series(data).ewm(span=12).mean().values[-1]
+        ema26 = pd.Series(data).ewm(span=26).mean().values[-1]
+        macd = ema12 - ema26
+        signal = pd.Series([macd]).ewm(span=9).mean().values[-1]
+        return macd - signal
 
 
 # ==================== 交易执行 ====================
