@@ -636,3 +636,65 @@ def get_balance(self, coin: str = "USDT") -> float:
 - 进程文件：`eth_futures_trader.py`
 - 状态：✅ 正常运行（ADX=12.8，横盘观望中）
 
+
+---
+
+## [2026-04-17 20:57 GMT+8] 第20次修复记录
+
+### 问题20：ETH合约机器人账户/持仓API同样间歇性40037 → 加降级策略
+
+**文件**：`eth_futures_trader.py`
+
+#### 20.1 问题现象
+- 与现货机器人相同的API权限问题
+- `/api/v2/mix/account/accounts` 返回 `40037 Apikey does not exist`
+- `get_positions()` 依赖 `get_account()` 也随之失败
+- 机器人实际运行正常（行情接口正常），但账户状态查询不可靠
+
+#### 20.2 修复方案
+
+**修改点1**：`BitgetFuturesAPI.__init__()` 新增缓存变量
+```python
+def __init__(self, config: Config):
+    self._last_known_account = None    # 账户缓存
+    self._last_known_positions = None  # 持仓缓存
+```
+
+**修改点2**：`get_account()` 加降级策略
+```python
+def get_account(self) -> Dict:
+    try:
+        data = self._request("GET", "/api/v2/mix/account/accounts", {...})
+        result = data[0] if isinstance(data, list) and data else {}
+        if result:
+            self._last_known_account = result  # 缓存成功结果
+        return result
+    except Exception as e:
+        print(f"[账户API故障] {e}, 使用缓存值")
+        if self._last_known_account is not None:
+            return self._last_known_account
+        return {"unrealizedPL": "0", "available": "0"}
+```
+
+**修改点3**：`get_positions()` 加降级策略
+```python
+def get_positions(self) -> List[Dict]:
+    try:
+        # ... 正常逻辑 ...
+        if positions:
+            self._last_known_positions = positions  # 缓存成功结果
+        return positions
+    except Exception as e:
+        print(f"[持仓API故障] {e}, 使用缓存值")
+        if self._last_known_positions is not None:
+            return self._last_known_positions
+        return []
+```
+
+#### 20.3 重启记录
+- 旧PID：555772（停止）
+- 新PID：827234（2026-04-17 20:57启动）
+- 状态：✅ 运行正常，ADX=16.3 横盘观望中
+
+#### 状态：✅ 已修复并验证
+

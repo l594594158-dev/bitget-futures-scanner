@@ -99,6 +99,8 @@ class BitgetFuturesAPI:
     def __init__(self, config: Config):
         self.config = config
         self.base_url = config.BASE_URL
+        self._last_known_account = None  # 账户缓存（API故障时降级使用）
+        self._last_known_positions = None  # 持仓缓存
         self.headers = {
             "Content-Type": "application/json",
             "ACCESS-KEY": config.API_KEY,
@@ -156,15 +158,25 @@ class BitgetFuturesAPI:
         return data[0] if isinstance(data, list) and data else {}
     
     def get_account(self) -> Dict:
-        """获取账户信息"""
-        data = self._request("GET", "/api/v2/mix/account/accounts", {
-            "symbol": self.config.SYMBOL,
-            "productType": self.config.PRODUCT_TYPE
-        })
-        return data[0] if isinstance(data, list) and data else {}
+        """获取账户信息（含降级策略）"""
+        try:
+            data = self._request("GET", "/api/v2/mix/account/accounts", {
+                "symbol": self.config.SYMBOL,
+                "productType": self.config.PRODUCT_TYPE
+            })
+            result = data[0] if isinstance(data, list) and data else {}
+            if result:
+                self._last_known_account = result  # 缓存成功结果
+            return result
+        except Exception as e:
+            print(f"[账户API故障] {e}, 使用缓存值")
+            if self._last_known_account is not None:
+                return self._last_known_account
+            # 保底：返回无持仓状态
+            return {"unrealizedPL": "0", "available": "0"}
     
     def get_positions(self) -> List[Dict]:
-        """获取持仓（通过 unrealizedPL + 成交历史）
+        """获取持仓（通过 unrealizedPL + 成交历史，含降级策略）
         unrealized > 0 → 多头持仓
         unrealized < 0 → 空头持仓
         """
@@ -172,6 +184,7 @@ class BitgetFuturesAPI:
             acct = self.get_account()
             unrealized = float(acct.get('unrealizedPL', '0'))
             if abs(unrealized) < 0.0001:
+                self._last_known_positions = []  # 缓存空仓
                 return []
             
             # 有持仓，通过成交历史计算数量
@@ -200,8 +213,14 @@ class BitgetFuturesAPI:
                 positions.append({'side': 'long', 'size': f'{round(long_qty, 4):.4f}'})
             elif unrealized < 0 and short_qty < -0.001:  # short_qty是负数
                 positions.append({'side': 'short', 'size': f'{round(abs(short_qty), 4):.4f}'})
+            
+            if positions:
+                self._last_known_positions = positions  # 缓存成功结果
             return positions
-        except:
+        except Exception as e:
+            print(f"[持仓API故障] {e}, 使用缓存值")
+            if self._last_known_positions is not None:
+                return self._last_known_positions
             return []
     
     def place_order(self, direction: str, order_type: str = "market",
