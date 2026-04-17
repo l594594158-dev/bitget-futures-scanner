@@ -111,3 +111,37 @@
 ### 平仓标志
 - 平仓接口可用：市价卖出入参 `side=sell, orderType=market, size=数量`
 - 卖出SPYON 0.053 @ 704.14 = 37.32 USDT（合并了之前两笔0.014+0.014+0.023+0.002）
+
+## 2026-04-17 更新：余额查询40037故障 → 加降级策略
+
+### 问题现象
+- `/api/v2/spot/account/assets` 偶发返回 `{"code":"40037","msg":"Apikey does not exist"}`
+- 余额返回0 → 触发 `Insufficient balance` 误判 → 无法下单
+- 行情接口（tickers/fills）正常，唯独账户接口间歇性失败
+
+### 根因分析
+- API Key的**账户Read权限**间歇性失效（可能IP绑定变动或权限被部分撤销）
+- 问题时间戳：4月16日约03:54后开始频繁出现
+- 4月17日20:26确认：服务器端实测API正常，余额225.30 USDT
+
+### 修复方案（bitget_trading_bot.py）
+
+**文件：bitget_trading_bot.py**
+- `BitgetAPI.__init__`：增加 `self._last_known_balance = None` 缓存变量
+- `get_balance()`：从单一API调用改为4层降级策略：
+  1. **API实时查询** → 成功后缓存到 `self._last_known_balance`
+  2. **成交记录重建** → 备用（暂未启用）
+  3. **缓存余额** → API故障时返回上次成功值（`self._last_known_balance`）
+  4. **参考快照** → 硬编码225.00 USDT（4月16日可靠快照）
+
+### 当前账户状态（2026-04-17 20:33）
+- 现金：**225.30 USDT**
+- 持仓市值：**158.40 USDT**
+- 总资产：**~383.70 USDT**
+- 持仓：TSLAON / IAUON / ITOTON / SPYON / KATUSDT / CVXUSDT
+
+### 机器人重启记录
+- PID 3696607（4月14日启动）→ 已停止
+- 新PID：821477（2026-04-17 20:33 启动）
+- 进程文件：trading_bot.py（美股现货）
+- 合约进程：PID 555772（eth_futures_trader.py，正常运行）
