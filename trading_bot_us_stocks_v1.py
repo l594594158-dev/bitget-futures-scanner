@@ -27,7 +27,7 @@ PASSPHRASE = "liugang123"
 BASE_URL = "https://api.bitget.com"
 
 # 每笔开仓金额 (USDT) - 最低2U
-POSITION_SIZE = 25
+POSITION_SIZE = 40
 
 # 扫描间隔 (秒) - 美股时段10分钟
 SCAN_INTERVAL = 600
