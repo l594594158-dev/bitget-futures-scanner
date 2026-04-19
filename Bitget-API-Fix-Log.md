@@ -799,3 +799,110 @@ adx = self.ti.adx(highs[::-1], lows[::-1], closes[::-1], 14)
 
 #### 状态：✅ 已修复并验证
 
+
+---
+
+## 修复：ETH合约机器人 - 字符串 * float 类型错误（2026-04-18）
+
+### 问题现象
+- 凌晨04:32检测到多个有效信号（ADX=33.1 > 25，成交量1.7x~2.3x），条件全部满足
+- 但每次都报错：`can't multiply sequence by non-int of type 'float'`
+- 报错后机器人继续监控，但无法开仓
+
+### 根本原因
+`get_ticker()['lastPr']` 返回的是**字符串**类型（如 `"1850.5"`），后续代码直接用字符串做数学运算：
+
+```python
+price = self.api.get_ticker()['lastPr']          # str: "1850.5"
+stop_loss = round(price * (1 - 0.015), 2)        # ❌ 字符串 * float → TypeError
+```
+
+Python 3 禁止字符串与浮点数相乘，直接抛异常。
+
+### 修复方案
+两处 `get_ticker()['lastPr']` 取值后强制转 `float()`：
+
+| 文件 | 行号 | 修复前 | 修复后 |
+|------|------|--------|--------|
+| eth_futures_trader.py | 637 | `price = self.api.get_ticker()['lastPr']` | `price = float(self.api.get_ticker()['lastPr'])` |
+| eth_futures_trader.py | 709 | `current = self.api.get_ticker()['lastPr']` | `current = float(self.api.get_ticker()['lastPr'])` |
+
+### 影响评估
+- **严重程度：** 致命（机会全部漏掉）
+- **影响范围：** 所有 `get_ticker()` 返回字符串的标的
+- **修复后：** 2026-04-18 20:22 重启成功，机器人正常运行
+
+### 教训
+Bitget API 返回值类型不稳定，有的接口返回数字字符串，有的返回纯字符串。下次接入新接口时，**所有数值字段都要主动做类型转换**，不要依赖 API 文档。
+
+
+---
+## 自检自动修复：进程异常 - ETH合约机器人（2026-04-19 13:30）
+
+**问题：** ETH合约机器人进程未运行
+
+**修复：** 重启机器人: cd /root/.openclaw/workspace && nohup python3 -u eth_futures_trader.py >> eth_futures.log 2>&1 &
+
+**涉及文件：** 无
+
+**自动修复：是**
+
+
+---
+## 自检自动修复：进程异常 - 美股机器人（2026-04-19 13:30）
+
+**问题：** 美股机器人进程未运行
+
+**修复：** 重启机器人: cd /root/.openclaw/workspace && nohup python3 -u trading_bot_us_stocks_v1.py >> bot_us_stocks.log 2>&1 &
+
+**涉及文件：** 无
+
+**自动修复：是**
+
+
+---
+## 自检自动修复：进程异常 - ETH合约机器人（2026-04-19 13:30）
+
+**问题：** ETH合约机器人进程未运行
+
+**修复：** 已执行重启命令: cd /root/.openclaw/workspace && nohup python3 -u eth_futures...
+
+**涉及文件：** 无
+
+**自动修复：是**
+
+
+---
+## 自检自动修复：进程异常 - 美股机器人（2026-04-19 13:30）
+
+**问题：** 美股机器人进程未运行
+
+**修复：** 已执行重启命令: cd /root/.openclaw/workspace && nohup python3 -u trading_bot...
+
+**涉及文件：** 无
+
+**自动修复：是**
+
+
+---
+## 自检自动修复：进程异常 - ETH合约机器人（2026-04-19 16:18）
+
+**问题：** ETH合约机器人进程未运行
+
+**修复：** 重启机器人: cd /root/.openclaw/workspace && nohup python3 -u eth_futures_trader.py >> eth_futures.log 2>&1 &
+
+**涉及文件：** 无
+
+**自动修复：是**
+
+
+---
+## 自检自动修复：进程异常 - ETH合约机器人（2026-04-19 16:18）
+
+**问题：** ETH合约机器人进程未运行
+
+**修复：** 已执行重启命令: cd /root/.openclaw/workspace && nohup python3 -u eth_futures...
+
+**涉及文件：** 无
+
+**自动修复：是**

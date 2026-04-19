@@ -635,7 +635,7 @@ class FuturesTrader:
             print(f"冷却中，剩余 {self.config.COOLDOWN_SECONDS - elapsed:.0f}s")
             return False
         
-        price = self.api.get_ticker()['lastPr']
+        price = float(self.api.get_ticker()['lastPr'])
         
         if side == 'long':
             stop_loss = round(price * (1 - self.config.STOP_LOSS_PCT), 2)
@@ -706,7 +706,7 @@ class FuturesTrader:
     
     def _calc_pnl_pct(self) -> float:
         if not self.in_position and self.entry_price:
-            current = self.api.get_ticker()['lastPr']
+            current = float(self.api.get_ticker()['lastPr'])
             if self.position_side == 'long':
                 return (current - self.entry_price) / self.entry_price
             else:

@@ -1,0 +1,27 @@
+{
+  "update_time": "2026-04-19 20:33:50",
+  "contracts": [
+    {
+      "symbol": "PROMUSDT",
+      "lastPr": 2.2142,
+      "high24h": 2.8856,
+      "low24h": 1.6206,
+      "change24h": 0.36485,
+      "quoteVolume": 43469739.16239,
+      "baseVolume": 19196823.8,
+      "fundingRate": -0.000215,
+      "add_time": "2026-04-19 20:33:50"
+    },
+    {
+      "symbol": "BLURUSDT",
+      "lastPr": 0.03103,
+      "high24h": 0.03286,
+      "low24h": 0.02459,
+      "change24h": 0.25374,
+      "quoteVolume": 12474131.051847,
+      "baseVolume": 416306759.6,
+      "fundingRate": -0.002833,
+      "add_time": "2026-04-19 20:33:50"
+    }
+  ]
+}

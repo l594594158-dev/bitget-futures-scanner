@@ -5,8 +5,8 @@
     "size_usdt": 25,
     "quantity": 0.07196108344607235,
     "entry_time": "2026-04-10T23:07:47.702748",
-    "highest_price": 393.86,
-    "trailing_stop": 374.167
+    "highest_price": 408.8,
+    "trailing_stop": 388.36
   },
   "IAUONUSDT": {
     "entry_price": 89.02,
@@ -14,7 +14,7 @@
     "size_usdt": 25,
     "quantity": 0.2808357672433161,
     "entry_time": "2026-04-14T01:02:03.994146",
-    "highest_price": 91.07,
+    "highest_price": 91.8,
     "trailing_stop": 85.4592
   },
   "ITOTONUSDT": {
@@ -23,17 +23,8 @@
     "size_usdt": 25,
     "quantity": 0.16467953362756077,
     "entry_time": "2026-04-14T21:51:47.081554",
-    "highest_price": 154.65,
+    "highest_price": 155.45,
     "trailing_stop": 144.21949999999998
-  },
-  "SPYONUSDT": {
-    "entry_price": 695.53,
-    "stop_loss": 0.05,
-    "size_usdt": 25,
-    "quantity": 0.035943812632093515,
-    "entry_time": "2026-04-14T23:23:57.921049",
-    "highest_price": 706.57,
-    "trailing_stop": 660.7534999999999
   },
   "KATUSDT": {
     "entry_price": 0.00814,
@@ -41,8 +32,8 @@
     "size_usdt": 25,
     "quantity": 3071.2530712530715,
     "entry_time": "2026-04-15T00:04:32.580704",
-    "highest_price": 0.008726,
-    "trailing_stop": 0.00846422
+    "highest_price": 0.009647,
+    "trailing_stop": 0.009164649999999998
   },
   "CVXUSDT": {
     "entry_price": 1.815,
@@ -50,7 +41,16 @@
     "size_usdt": 25,
     "quantity": 13.774104683195592,
     "entry_time": "2026-04-17T00:35:17.825559",
-    "highest_price": 1.856,
-    "trailing_stop": 1.7242499999999998
+    "highest_price": 1.961,
+    "trailing_stop": 1.8629499999999999
+  },
+  "METAONUSDT": {
+    "entry_price": 684.0,
+    "stop_loss": 0.05,
+    "size_usdt": 40,
+    "quantity": 0.05847953216374269,
+    "entry_time": "2026-04-17T21:45:26.418557",
+    "highest_price": 688.44,
+    "trailing_stop": 649.8
   }
 }
