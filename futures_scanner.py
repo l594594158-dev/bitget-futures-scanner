@@ -53,11 +53,12 @@ API_SECRET = "3d485fcacc8e5aaae096ec2526c6966edfe1e3a0a2da1627111aa0d53fab6a4c"
 PASSPHRASE = "liugang123"
 BASE_URL = "https://api.bitget.com"
 
-GAIN_THRESHOLD = 0.20
+GAIN_THRESHOLD = 0.20       # 入库：日涨幅>20%
+GAIN_REMOVE = 0.10          # 出库：日涨幅<10%则从DB1清除
 MIN_TOKEN_AGE_DAYS = 10
 MAX_DB_SIZE = 10
 MONITOR_INTERVAL = 5
-POSITION_SIZE = 3.0
+POSITION_SIZE = 2.0
 LEVERAGE = 10
 MARGIN_MODE = "isolated"
 COOLDOWN_SECONDS = 300
@@ -147,7 +148,9 @@ def scan_hot_contracts():
     open_times = get_contract_open_times()
     now_ms = time.time() * 1000
     min_age_ms = MIN_TOKEN_AGE_DAYS * 86400 * 1000
-    hot = []
+
+    # 构建当前满足条件的代币字典
+    valid = {}
     for t in tickers:
         try:
             symbol = t.get('symbol', '')
@@ -158,7 +161,7 @@ def scan_hot_contracts():
                 age_ms = now_ms - open_time
                 if age_ms < min_age_ms: continue
             else: continue
-            hot.append({
+            valid[symbol] = {
                 'symbol': symbol,
                 'lastPr': float(t.get('lastPr', 0)),
                 'high24h': float(t.get('high24h', 0)),
@@ -169,16 +172,42 @@ def scan_hot_contracts():
                 'fundingRate': float(t.get('fundingRate', 0)),
                 'openTime': open_time,
                 'add_time': datetime.now().strftime('%Y-%m-%d %H:%M:%S'),
-            })
+            }
         except: continue
-    hot.sort(key=lambda x: x['change24h'], reverse=True)
-    hot = hot[:MAX_DB_SIZE]
+
+    # 合并已有DB1，检查是否有代币涨幅跌破10%
+    db = load_db()
+    existing = {c['symbol']: c for c in db.get('contracts', [])}
+    removed = []
+    for sym, c in existing.items():
+        if sym not in valid:
+            # 涨幅已不足或不在列表中，检查是否跌破10%
+            for t in tickers:
+                if t.get('symbol') == sym:
+                    change = float(t.get('change24h', 0))
+                    if 0 < change < GAIN_REMOVE:
+                        removed.append(sym)
+                        logger.info(f"  🗑️ 清除: {sym} 涨幅已跌破10%({change*100:.1f}%)")
+                    break
+            if sym not in valid:
+                pass  # 不在tickers中，不计入
+
+    # 合并：保留有效的，剔除涨幅<10%的
+    for sym in removed:
+        existing.pop(sym, None)
+
+    # 合并新符合条件的
+    for sym, c in valid.items():
+        existing[sym] = c
+
+    # 按涨幅排序，取前MAX_DB_SIZE个
+    hot = sorted(existing.values(), key=lambda x: x['change24h'], reverse=True)[:MAX_DB_SIZE]
+
     logger.info(f"📊 扫描完成: {len(hot)}个(DB1上限{MAX_DB_SIZE})")
     for h in hot:
         age_days = (now_ms - h['openTime'])/(86400*1000) if h['openTime'] > 0 else 0
         logger.info(f"  {h['symbol']}: +{h['change24h']*100:.1f}% 年龄{age_days:.0f}天")
     if hot:
-        db = load_db()
         db['contracts'] = hot
         db['update_time'] = datetime.now().strftime('%Y-%m-%d %H:%M:%S')
         save_db(db)
@@ -286,9 +315,15 @@ def compute_momentum_slowdown(closes, vols, period=10):
 
 # ==================== 信号分析 v4 ====================
 def analyze_symbol(symbol):
+    """
+    基于特定条件组合的开仓信号判断（AND逻辑）
+    ========================================
+    做多(AND): ①RSI正背离 + ②MACD>0 + ③布林中轨支撑 + ④附加(≥1)
+    做空(AND): ①RSI负背离 + ②非强趋势(ADX>60禁止) + ③附加(≥1)
+    """
     reasons = []
-    long_score = 0
-    short_score = 0
+    long_ok = False
+    short_ok = False
 
     try:
         c5 = api_request('GET', '/api/v2/mix/market/candles',
@@ -297,7 +332,7 @@ def analyze_symbol(symbol):
             {'symbol': symbol, 'productType': 'usdt-futures', 'granularity': '1H', 'limit': '100'})
     except:
         return None, "K线获取失败", 0
-    if not c5 or len(c5) < 30: return None, f"K线不足", 0
+    if not c5 or len(c5) < 30: return None, "K线不足", 0
 
     c5 = c5 or []; c1 = c1 or []
     cl5 = [float(c[4]) for c in c5]
@@ -307,162 +342,72 @@ def analyze_symbol(symbol):
     cl1 = [float(c[4]) for c in c1] if c1 else cl5
     hi1 = [float(c[2]) for c in c1] if c1 else hi5
     lo1 = [float(c[3]) for c in c1] if c1 else lo5
-    vo1 = [float(c[5]) for c in c1] if c1 else vo5
 
     price = cl5[-1]
     pc5 = (cl5[-1]-cl5[-5])/cl5[-5] if len(cl5)>=5 else 0
-    pc20 = (cl5[-1]-cl5[-20])/cl5[-20] if len(cl5)>=20 else 0
 
     rsi5 = compute_rsi(cl5)
     rsi1 = compute_rsi(cl1)
     macd5, sig5, hist5 = compute_macd(cl5)
     bb_up5, bb_mid5, bb_lo5 = compute_bollinger(cl5)
-    bb_up1, bb_mid1, _ = compute_bollinger(cl1)
-    bbw5 = compute_bb_width(cl5)
     adx1, dip1, dim1 = compute_adx(hi1, lo1, cl1)
     vr5 = compute_vol_ratio(vo5)
-    vr1 = compute_vol_ratio(vo1)
+    bb_dev = abs(price-bb_mid5)/bb_mid5*100 if bb_mid5 else 999
 
-    # === 顶部专项指标 ===
+    # RSI背离
     has_bear_div, bear_div_type = compute_rsi_divergence(cl5)
+    has_bull_div, bull_div_type = compute_rsi_divergence(cl5)
+    # 动量衰竭
     mom_slowdown, slowdown_deg = compute_momentum_slowdown(cl5, vo5)
 
-    # === 底部专项指标 ===
-    has_bull_div, bull_div_type = compute_rsi_divergence(cl5)
+    # ===================== 做多条件 =====================
+    # ① RSI正背离
+    cond1_long = has_bull_div and bull_div_type == 'bullish'
+    # ② MACD柱线>0
+    cond2_long = hist5 is not None and hist5 > 0
+    # ③ 布林中轨支撑(偏离<2%)
+    cond3_long = bb_dev < 2.0
+    # ④ 附加(至少满足1个)
+    extra_long = []
+    if adx1 and adx1 > 25 and dip1 > dim1: extra_long.append(f"ADX={adx1:.0f}>25+DI+")
+    if vr5 > 1.2: extra_long.append(f"vol={vr5:.2f}x>1.2")
+    if rsi5 < 50: extra_long.append(f"RSI={rsi5:.1f}<50")
+    cond4_long = len(extra_long) >= 1
 
-    # ========== 做多信号 ==========
-    # 1. RSI蓄力/超卖
-    if 35 <= rsi5 <= 60:
-        long_score += 2
-        reasons.append(f"RSI5m={rsi5:.1f}(蓄力)")
-    elif rsi5 < 35:
-        long_score += 1
-        reasons.append(f"RSI5m={rsi5:.1f}(超卖)")
+    long_ok = cond1_long and cond2_long and cond3_long and cond4_long
+    reasons.append(
+        f"做多: ①RSI正背离={'✅' if cond1_long else '❌'} "
+        f"②MACD>0={'✅' if cond2_long else '❌'} "
+        f"③布林中轨<2%={'✅' if cond3_long else '❌'} "
+        f"④附加={'✅' if cond4_long else '❌'}{extra_long}"
+    )
 
-    # 2. RSI正背离(价格新低RSI没新低) -> 底部信号强
-    if has_bull_div and bull_div_type == 'bullish':
-        long_score += 3
-        reasons.append("RSI正背离(底部确认)")
+    # ===================== 做空条件 =====================
+    # ① RSI负背离
+    cond1_short = has_bear_div and bear_div_type == 'bearish'
+    # ② 非强趋势(ADX>60+DI+主导时禁止)
+    cond2_short = not (adx1 and adx1 > 60 and dip1 > dim1)
+    # ③ 附加(至少满足1个)
+    extra_short = []
+    if hist5 is not None and hist5 < 0: extra_short.append(f"MACD<0({hist5:.4f})")
+    if pc5 > 0 and vr5 < 0.5: extra_short.append(f"量价背离(vol={vr5:.2f}x)")
+    if bb_up5 and price >= bb_up5: extra_short.append("触及布林上轨")
+    if mom_slowdown and slowdown_deg > 0.5: extra_short.append(f"动量衰竭({slowdown_deg:.1f})")
+    cond3_short = len(extra_short) >= 1
 
-    # 3. MACD
-    if hist5 is not None and hist5 > 0 and cl5[-1] > cl5[-3]:
-        long_score += 2
-        reasons.append("MACD金叉")
-    elif hist5 is not None and hist5 > 0:
-        long_score += 1
-        reasons.append("MACD柱线正")
+    short_ok = cond1_short and cond2_short and cond3_short
+    reasons.append(
+        f"做空: ①RSI负背离={'✅' if cond1_short else '❌'} "
+        f"②非ADX>60+DI+={'✅' if cond2_short else '❌'} "
+        f"③附加={'✅' if cond3_short else '❌'}{extra_short}"
+    )
 
-    # 4. 缩量蓄力后放量突破(量能重新聚集)
-    if vr5 > 1.5 and pc5 > 0.005:
-        long_score += 2
-        reasons.append(f"放量上涨(vol={vr5:.1f}x)")
-    elif vr5 > 1.2 and pc5 > 0:
-        long_score += 1
-        reasons.append(f"温和放量(vol={vr5:.1f}x)")
-
-    # 5. 布林收口后放量(波动率压缩)
-    if bbw5 is not None and bbw5 < 0.05:  # 布林带宽极度收窄
-        if vr5 > 1.3:
-            long_score += 2
-            reasons.append(f"布林收口蓄力+放量(vol={vr5:.1f}x)")
-        elif vr5 > 1.0:
-            long_score += 1
-            reasons.append(f"布林收口(vbw={bbw5:.3f})")
-
-    # 6. ADX + DI+趋势
-    if adx1 is not None:
-        if adx1 > 30 and dip1 > dim1:
-            long_score += 2
-            reasons.append(f"ADX={adx1:.0f}+DI+主导")
-        elif dip1 > dim1:
-            long_score += 1
-            reasons.append(f"DI+排列")
-
-    # 7. 布林中轨支撑
-    if bb_mid5 and abs(price-bb_mid5)/bb_mid5 < 0.02:
-        long_score += 1
-        reasons.append("布林中轨支撑")
-
-    # ========== 做空信号(顶部判断) ==========
-    # 1. RSI超买
-    if rsi5 > 80:
-        short_score += 3
-        reasons.append(f"RSI5m={rsi5:.1f}(极度超买)")
-    elif rsi5 > 75:
-        short_score += 2
-        reasons.append(f"RSI5m={rsi5:.1f}(严重超买)")
-    elif rsi5 > 65:
-        short_score += 1
-        reasons.append(f"RSI5m={rsi5:.1f}(超买)")
-
-    if rsi1 > 75:
-        short_score += 2
-        reasons.append(f"RSI1h={rsi1:.1f}(中期超买)")
-
-    # 2. RSI负背离(价格新高RSI没新高) -> 顶部信号最强
-    if has_bear_div and bear_div_type == 'bearish':
-        short_score += 4
-        reasons.append("RSI负背离(顶部确认!)")
-
-    # 3. 动量衰竭(涨幅放缓但仍在涨)
-    if mom_slowdown and slowdown_deg > 0.5:
-        short_score += 3
-        reasons.append(f"动量衰竭({slowdown_deg:.1f})")
-    elif mom_slowdown:
-        short_score += 1
-        reasons.append(f"动量放缓({slowdown_deg:.1f})")
-
-    # 4. MACD
-    if hist5 is not None and hist5 < -0.5:
-        short_score += 3
-        reasons.append(f"MACD转空({hist5:.4f})")
-    elif macd5 is not None and sig5 is not None and macd5 < sig5:
-        short_score += 1
-        reasons.append("MACD死叉")
-
-    # 5. 缩量上涨(量价背离)
-    if pc5 > 0.005 and vr5 < 0.5:
-        short_score += 3
-        reasons.append(f"量价背离(vol={vr5:.2f}x)")
-    elif pc5 > 0.002 and vr5 < 0.7:
-        short_score += 1
-        reasons.append(f"量能萎缩(vol={vr5:.2f}x)")
-
-    # 6. 触及/突破布林上轨
-    if bb_up5 and price >= bb_up5:
-        short_score += 2
-        reasons.append("触及布林上轨")
-    elif bb_up5 and price >= bb_up5 * 0.98:
-        short_score += 1
-        reasons.append("逼近布林上轨")
-
-    # 7. ADX>60强趋势禁止做空(除非有负背离)
-    if adx1 is not None and adx1 > 60 and dip1 > dim1:
-        if not (has_bear_div and bear_div_type == 'bearish'):
-            # 强趋势中非极端超买信号不逆势做空
-            if short_score > 0:
-                reasons.append(f"ADX={adx1:.0f}>60强趋势压制")
-                short_score = 0  # 直接清零
-
-    if adx1 is not None:
-        if adx1 < 20:
-            short_score += 1
-            reasons.append(f"ADX={adx1:.0f}(趋势减弱)")
-        if dim1 is not None and dip1 is not None and dim1 > dip1:
-            short_score += 2
-            reasons.append(f"DI-空头排列")
-
-    # ========== 最终方向 ==========
     direction = None
     trigger_score = 0
-    if long_score >= 5 and long_score > short_score:
-        direction = 'long'
-        trigger_score = long_score
-    elif short_score >= 5 and short_score >= long_score:
-        direction = 'short'
-        trigger_score = short_score
+    if long_ok: direction = 'long'; trigger_score = 10
+    elif short_ok: direction = 'short'; trigger_score = 10
 
-    reason_str = f"[{symbol}] 多:{long_score} 空:{short_score} | " + " | ".join(reasons)
+    reason_str = f"[{symbol}] " + " | ".join(reasons)
     return direction, reason_str, trigger_score
 
 
