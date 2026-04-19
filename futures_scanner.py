@@ -148,7 +148,7 @@ def scan_hot_contracts():
     3. 用1D日K线接口验证代币已上线>24小时（能拿到日K=真实代币）
     4. 涨幅跌破10%则出库
     """
-    logger.info("🔍 扫描: 日涨幅>20% & 已上线>24小时")
+    logger.info("🔍 扫描: 日涨幅>20% & 已上线>10天")
     tickers = api_request('GET', '/api/v2/mix/market/tickers', {'productType': 'USDT-FUTURES'})
     if not tickers:
         logger.error("tickers空"); return []
@@ -164,9 +164,9 @@ def scan_hot_contracts():
             try:
                 test_1d = api_request('GET', '/api/v2/mix/market/candles', {
                     'symbol': symbol, 'productType': 'usdt-futures',
-                    'granularity': '1D', 'limit': '1'
+                    'granularity': '1D', 'limit': '10'
                 })
-                if not test_1d or len(test_1d) < 1:
+                if not test_1d or len(test_1d) < 10:
                     continue
             except:
                 continue

@@ -1,49 +1,49 @@
 {
-  "update_time": "2026-04-20 02:22:54",
+  "update_time": "2026-04-20 02:24:24",
   "contracts": [
     {
       "symbol": "PIEVERSEUSDT",
-      "lastPr": 0.95946,
+      "lastPr": 0.91733,
       "high24h": 1.01253,
       "low24h": 0.53809,
-      "change24h": 0.73542,
-      "quoteVolume": 58337794.0512,
-      "baseVolume": 79706562.0,
-      "fundingRate": 0.000415,
-      "add_time": "2026-04-20 02:22:54"
+      "change24h": 0.66433,
+      "quoteVolume": 58861949.87803,
+      "baseVolume": 80269930.0,
+      "fundingRate": 0.000397,
+      "add_time": "2026-04-20 02:24:24"
     },
     {
       "symbol": "BLURUSDT",
-      "lastPr": 0.03343,
+      "lastPr": 0.03336,
       "high24h": 0.0378,
       "low24h": 0.02531,
-      "change24h": 0.26199,
-      "quoteVolume": 23461109.912291,
-      "baseVolume": 738521458.6,
-      "fundingRate": -0.003458,
-      "add_time": "2026-04-20 02:22:53"
+      "change24h": 0.26316,
+      "quoteVolume": 23469072.757992,
+      "baseVolume": 738759022.4,
+      "fundingRate": -0.003427,
+      "add_time": "2026-04-20 02:24:23"
     },
     {
       "symbol": "GUNUSDT",
-      "lastPr": 0.01885,
+      "lastPr": 0.01886,
       "high24h": 0.01934,
       "low24h": 0.01428,
-      "change24h": 0.25499,
-      "quoteVolume": 2600832.13446,
-      "baseVolume": 151656977.0,
-      "fundingRate": -0.000363,
-      "add_time": "2026-04-20 02:22:53"
+      "change24h": 0.26154,
+      "quoteVolume": 2629769.96736,
+      "baseVolume": 153111003.0,
+      "fundingRate": -0.000367,
+      "add_time": "2026-04-20 02:24:23"
     },
     {
       "symbol": "DOGSUSDT",
-      "lastPr": 3.869e-05,
+      "lastPr": 3.851e-05,
       "high24h": 4.552e-05,
       "low24h": 3.042e-05,
-      "change24h": 0.24847,
-      "quoteVolume": 2882119.010032,
-      "baseVolume": 75866522800.0,
-      "fundingRate": -0.005599,
-      "add_time": "2026-04-20 02:22:53"
+      "change24h": 0.23429,
+      "quoteVolume": 2888988.009849,
+      "baseVolume": 76039375300.0,
+      "fundingRate": -0.005552,
+      "add_time": "2026-04-20 02:24:23"
     }
   ]
 }
