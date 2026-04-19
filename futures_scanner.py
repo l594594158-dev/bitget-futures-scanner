@@ -55,7 +55,7 @@ BASE_URL = "https://api.bitget.com"
 
 GAIN_THRESHOLD = 0.20       # 入库：日涨幅>20%
 GAIN_REMOVE = 0.10          # 出库：日涨幅<10%则从DB1清除
-MIN_TOKEN_AGE_DAYS = 10
+
 MAX_DB_SIZE = 10
 MONITOR_INTERVAL = 5
 POSITION_SIZE = 2.0
@@ -130,16 +130,6 @@ def save_cooldown(data):
     with open(COOLDOWN_FILE, 'w') as f: json.dump(data, f)
 
 # ==================== 扫描 ====================
-def get_contract_open_times():
-    result = api_request('GET', '/api/v2/mix/market/contracts', {'productType': 'USDT-FUTURES'})
-    if not result: return {}
-    out = {}
-    for c in result:
-        ot = c.get('openTime', '')
-        try: out[c['symbol']] = int(ot) if ot else 0
-        except: out[c['symbol']] = 0
-    return out
-
 def scan_hot_contracts():
     """
     扫描入库逻辑：
