@@ -1,41 +1,57 @@
 {
-  "update_time": "2026-04-20 02:05:08",
+  "update_time": "2026-04-20 02:17:59",
   "contracts": [
     {
       "symbol": "PIEVERSEUSDT",
-      "lastPr": 0.87724,
+      "lastPr": 0.93853,
       "high24h": 1.01253,
       "low24h": 0.53809,
-      "change24h": 0.61575,
-      "quoteVolume": 52698198.06847,
-      "baseVolume": 73745517.0,
-      "fundingRate": 0.000504,
+      "change24h": 0.70024,
+      "quoteVolume": 56527390.19896,
+      "baseVolume": 77743820.0,
+      "fundingRate": 0.000459,
       "openTime": 1763362015801,
-      "add_time": "2026-04-20 02:05:08"
+      "age_unknown": false,
+      "add_time": "2026-04-20 02:17:59"
+    },
+    {
+      "symbol": "BLURUSDT",
+      "lastPr": 0.03328,
+      "high24h": 0.0378,
+      "low24h": 0.02531,
+      "change24h": 0.25632,
+      "quoteVolume": 23351090.60156,
+      "baseVolume": 735240306.9,
+      "fundingRate": -0.003553,
+      "openTime": 1776622679019.7432,
+      "age_unknown": true,
+      "add_time": "2026-04-20 02:17:59"
     },
     {
       "symbol": "DOGSUSDT",
-      "lastPr": 3.855e-05,
+      "lastPr": 3.886e-05,
       "high24h": 4.552e-05,
       "low24h": 3.042e-05,
-      "change24h": 0.22967,
-      "quoteVolume": 2733326.313321,
-      "baseVolume": 71999741800.0,
-      "fundingRate": -0.005723,
+      "change24h": 0.25072,
+      "quoteVolume": 2844984.938602,
+      "baseVolume": 74917022100.0,
+      "fundingRate": -0.005647,
       "openTime": 1724670959110,
-      "add_time": "2026-04-20 02:05:08"
+      "age_unknown": false,
+      "add_time": "2026-04-20 02:17:59"
     },
     {
       "symbol": "GUNUSDT",
-      "lastPr": 0.01821,
+      "lastPr": 0.01862,
       "high24h": 0.01934,
       "low24h": 0.01428,
-      "change24h": 0.20676,
-      "quoteVolume": 2191957.07248,
-      "baseVolume": 129712861.0,
-      "fundingRate": -0.000291,
+      "change24h": 0.23557,
+      "quoteVolume": 2504502.85186,
+      "baseVolume": 146595013.0,
+      "fundingRate": -0.000356,
       "openTime": 1743426308080,
-      "add_time": "2026-04-20 02:05:08"
+      "age_unknown": false,
+      "add_time": "2026-04-20 02:17:59"
     }
   ]
 }

@@ -157,10 +157,23 @@ def scan_hot_contracts():
             change = float(t.get('change24h', 0))
             if change <= GAIN_THRESHOLD: continue
             open_time = open_times.get(symbol, 0)
+            age_unknown = False
             if open_time > 0:
                 age_ms = now_ms - open_time
                 if age_ms < min_age_ms: continue
-            else: continue
+            elif open_time == 0:
+                # openTime为空说明API数据问题，用openUtc（UTC凌晨开盘价）估算
+                open_utc = t.get('openUtc', '')
+                if open_utc:
+                    try:
+                        open_price = float(open_utc)
+                        last_price = float(t.get('lastPr', 0))
+                        price_ratio = last_price / open_price if open_price > 0 else 0
+                        # openUtc > 0 且 price_ratio < 10 → 代币已上线超过24小时
+                        if open_price > 0 and price_ratio < 10:
+                            open_time = now_ms  # 用当前时间替代，保证能入库
+                            age_unknown = True   # 标记为API数据缺失
+                    except: pass
             valid[symbol] = {
                 'symbol': symbol,
                 'lastPr': float(t.get('lastPr', 0)),
@@ -171,6 +184,7 @@ def scan_hot_contracts():
                 'baseVolume': float(t.get('baseVolume', 0)),
                 'fundingRate': float(t.get('fundingRate', 0)),
                 'openTime': open_time,
+                'age_unknown': age_unknown,
                 'add_time': datetime.now().strftime('%Y-%m-%d %H:%M:%S'),
             }
         except: continue
@@ -205,8 +219,13 @@ def scan_hot_contracts():
 
     logger.info(f"📊 扫描完成: {len(hot)}个(DB1上限{MAX_DB_SIZE})")
     for h in hot:
-        age_days = (now_ms - h['openTime'])/(86400*1000) if h['openTime'] > 0 else 0
-        logger.info(f"  {h['symbol']}: +{h['change24h']*100:.1f}% 年龄{age_days:.0f}天")
+        age_unknown = h.get('age_unknown', False)
+        if age_unknown:
+            age_str = "API缺失"
+        else:
+            age_days = (now_ms - h['openTime'])/(86400*1000) if h['openTime'] > 0 else 0
+            age_str = f"{age_days:.0f}天"
+        logger.info(f"  {h['symbol']}: +{h['change24h']*100:.1f}% 年龄{age_str}")
     if hot:
         db['contracts'] = hot
         db['update_time'] = datetime.now().strftime('%Y-%m-%d %H:%M:%S')
