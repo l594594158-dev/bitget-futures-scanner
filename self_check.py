@@ -354,7 +354,29 @@ def main():
     # ---------- 汇总 ----------
     log("=" * 40, "📋")
     fm_running = "futures_monitor_pid" in proc.get('details', {})
-    summary = f"检查完成 | 进程:✅ 美股:{'✅' if proc['us_stocks'] else '❌'} 合约监测:{'✅' if fm_running else '❌'} | API:{sum(1 for e in endpoints.values() if e['ok'])}/{len(endpoints)} 正常 | 修复:{len(checker.fixes)} 个"
+
+    # 读取合约任务状态
+    db1_info = ""
+    try:
+        import json as _json
+        with open(f"{WORKSPACE}/db_hot_contracts.json") as _f:
+            _db = _json.load(_f)
+            _contracts = _db.get('contracts', [])
+            db1_info = f" DB1:{len(_contracts)}个"
+            if _contracts:
+                _top = _contracts[0]
+                db1_info += f"({_top['symbol']}+{_top['change24h']*100:.0f}%)"
+        with open(f"{WORKSPACE}/db_positions.json") as _f:
+            _pos = _json.load(_f)
+            _positions = _pos.get('positions', [])
+            if _positions:
+                db1_info += f" | 持仓:{len(_positions)}个"
+                for _p in _positions:
+                    db1_info += f" {_p['symbol']}"
+    except:
+        db1_info = " DB1:查不到"
+
+    summary = f"检查完成 | 进程:✅ 美股:{'✅' if proc['us_stocks'] else '❌'} 合约监测:{'✅' if fm_running else '❌'}{db1_info} | API:{sum(1 for e in endpoints.values() if e['ok'])}/{len(endpoints)} 正常 | 修复:{len(checker.fixes)} 个"
     log(summary, "📊")
     print("=" * 60)
 
