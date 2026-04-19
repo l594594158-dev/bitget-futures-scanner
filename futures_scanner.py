@@ -141,39 +141,36 @@ def get_contract_open_times():
     return out
 
 def scan_hot_contracts():
-    logger.info("🔍 扫描: 日涨幅>20% & 年龄>10天")
+    """
+    扫描入库逻辑：
+    1. tickers获取537个代币的日涨幅
+    2. 过滤日涨幅>20%
+    3. 用1D日K线接口验证代币已上线>24小时（能拿到日K=真实代币）
+    4. 涨幅跌破10%则出库
+    """
+    logger.info("🔍 扫描: 日涨幅>20% & 已上线>24小时")
     tickers = api_request('GET', '/api/v2/mix/market/tickers', {'productType': 'USDT-FUTURES'})
     if not tickers:
         logger.error("tickers空"); return []
-    open_times = get_contract_open_times()
-    now_ms = time.time() * 1000
-    min_age_ms = MIN_TOKEN_AGE_DAYS * 86400 * 1000
 
-    # 构建当前满足条件的代币字典
     valid = {}
     for t in tickers:
         try:
             symbol = t.get('symbol', '')
             change = float(t.get('change24h', 0))
             if change <= GAIN_THRESHOLD: continue
-            open_time = open_times.get(symbol, 0)
-            age_unknown = False
-            if open_time > 0:
-                age_ms = now_ms - open_time
-                if age_ms < min_age_ms: continue
-            elif open_time == 0:
-                # openTime为空时，用K线接口验证代币是否真实可交易
-                # 能拿到K线 = 代币已上线，不需要年龄限制
-                try:
-                    test_candles = api_request('GET', '/api/v2/mix/market/candles', {
-                        'symbol': symbol, 'productType': 'usdt-futures',
-                        'granularity': '5m', 'limit': '1'
-                    })
-                    if not test_candles or len(test_candles) < 1:
-                        logger.debug(f"  过滤(K线无数据): {symbol}")
-                        continue
-                except:
+
+            # 验证代币是否真实上线>24小时：能拿到日K = 足够
+            try:
+                test_1d = api_request('GET', '/api/v2/mix/market/candles', {
+                    'symbol': symbol, 'productType': 'usdt-futures',
+                    'granularity': '1D', 'limit': '1'
+                })
+                if not test_1d or len(test_1d) < 1:
                     continue
+            except:
+                continue
+
             valid[symbol] = {
                 'symbol': symbol,
                 'lastPr': float(t.get('lastPr', 0)),
@@ -183,32 +180,27 @@ def scan_hot_contracts():
                 'quoteVolume': float(t.get('quoteVolume', 0)),
                 'baseVolume': float(t.get('baseVolume', 0)),
                 'fundingRate': float(t.get('fundingRate', 0)),
-                'openTime': open_time,
-                'age_unknown': age_unknown,
                 'add_time': datetime.now().strftime('%Y-%m-%d %H:%M:%S'),
             }
         except: continue
 
-    # 合并已有DB1，检查是否有代币涨幅跌破10%
+    # 合并已有DB1，检查涨幅是否跌破10%
     db = load_db()
     existing = {c['symbol']: c for c in db.get('contracts', [])}
-    removed = []
-    for sym, c in existing.items():
-        if sym not in valid:
-            # 涨幅已不足或不在列表中，检查是否跌破10%
-            for t in tickers:
-                if t.get('symbol') == sym:
-                    change = float(t.get('change24h', 0))
-                    if 0 < change < GAIN_REMOVE:
-                        removed.append(sym)
-                        logger.info(f"  🗑️ 清除: {sym} 涨幅已跌破10%({change*100:.1f}%)")
-                    break
-            if sym not in valid:
-                pass  # 不在tickers中，不计入
 
-    # 合并：保留有效的，剔除涨幅<10%的
-    for sym in removed:
-        existing.pop(sym, None)
+    # 遍历已有持仓，跌幅跌破10%则清除
+    for sym in list(existing.keys()):
+        if sym in valid: continue  # 仍在valid里，跳过
+        # 不在valid里，检查tickers中是否跌破10%
+        for t in tickers:
+            if t.get('symbol') == sym:
+                change = float(t.get('change24h', 0))
+                if 0 < change < GAIN_REMOVE:
+                    logger.info(f"  🗑️ 清除: {sym} 涨幅跌破10%({change*100:.1f}%)")
+                    existing.pop(sym, None)
+                elif change <= 0:
+                    existing.pop(sym, None)
+                break
 
     # 合并新符合条件的
     for sym, c in valid.items():
@@ -219,13 +211,7 @@ def scan_hot_contracts():
 
     logger.info(f"📊 扫描完成: {len(hot)}个(DB1上限{MAX_DB_SIZE})")
     for h in hot:
-        age_unknown = h.get('age_unknown', False)
-        if age_unknown:
-            age_str = "API缺失"
-        else:
-            age_days = (now_ms - h['openTime'])/(86400*1000) if h['openTime'] > 0 else 0
-            age_str = f"{age_days:.0f}天"
-        logger.info(f"  {h['symbol']}: +{h['change24h']*100:.1f}% 年龄{age_str}")
+        logger.info(f"  {h['symbol']}: +{h['change24h']*100:.1f}%")
     if hot:
         db['contracts'] = hot
         db['update_time'] = datetime.now().strftime('%Y-%m-%d %H:%M:%S')

@@ -1,57 +1,49 @@
 {
-  "update_time": "2026-04-20 02:20:05",
+  "update_time": "2026-04-20 02:22:54",
   "contracts": [
     {
       "symbol": "PIEVERSEUSDT",
-      "lastPr": 0.90465,
+      "lastPr": 0.95946,
       "high24h": 1.01253,
       "low24h": 0.53809,
-      "change24h": 0.638,
-      "quoteVolume": 57528878.51707,
-      "baseVolume": 78844508.0,
-      "fundingRate": 0.00042,
-      "openTime": 1763362015801,
-      "age_unknown": false,
-      "add_time": "2026-04-20 02:20:05"
-    },
-    {
-      "symbol": "GUNUSDT",
-      "lastPr": 0.01915,
-      "high24h": 0.01934,
-      "low24h": 0.01428,
-      "change24h": 0.27497,
-      "quoteVolume": 2563261.77321,
-      "baseVolume": 149680739.0,
-      "fundingRate": -0.00036,
-      "openTime": 1743426308080,
-      "age_unknown": false,
-      "add_time": "2026-04-20 02:20:05"
-    },
-    {
-      "symbol": "DOGSUSDT",
-      "lastPr": 3.903e-05,
-      "high24h": 4.552e-05,
-      "low24h": 3.042e-05,
-      "change24h": 0.25944,
-      "quoteVolume": 2865479.677514,
-      "baseVolume": 75440963300.0,
-      "fundingRate": -0.005599,
-      "openTime": 1724670959110,
-      "age_unknown": false,
-      "add_time": "2026-04-20 02:20:05"
+      "change24h": 0.73542,
+      "quoteVolume": 58337794.0512,
+      "baseVolume": 79706562.0,
+      "fundingRate": 0.000415,
+      "add_time": "2026-04-20 02:22:54"
     },
     {
       "symbol": "BLURUSDT",
-      "lastPr": 0.03317,
+      "lastPr": 0.03343,
       "high24h": 0.0378,
       "low24h": 0.02531,
-      "change24h": 0.25549,
-      "quoteVolume": 23362274.744007,
-      "baseVolume": 735568536.5,
-      "fundingRate": -0.003499,
-      "openTime": 0,
-      "age_unknown": false,
-      "add_time": "2026-04-20 02:20:05"
+      "change24h": 0.26199,
+      "quoteVolume": 23461109.912291,
+      "baseVolume": 738521458.6,
+      "fundingRate": -0.003458,
+      "add_time": "2026-04-20 02:22:53"
+    },
+    {
+      "symbol": "GUNUSDT",
+      "lastPr": 0.01885,
+      "high24h": 0.01934,
+      "low24h": 0.01428,
+      "change24h": 0.25499,
+      "quoteVolume": 2600832.13446,
+      "baseVolume": 151656977.0,
+      "fundingRate": -0.000363,
+      "add_time": "2026-04-20 02:22:53"
+    },
+    {
+      "symbol": "DOGSUSDT",
+      "lastPr": 3.869e-05,
+      "high24h": 4.552e-05,
+      "low24h": 3.042e-05,
+      "change24h": 0.24847,
+      "quoteVolume": 2882119.010032,
+      "baseVolume": 75866522800.0,
+      "fundingRate": -0.005599,
+      "add_time": "2026-04-20 02:22:53"
     }
   ]
 }
