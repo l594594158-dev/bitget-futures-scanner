@@ -162,18 +162,18 @@ def scan_hot_contracts():
                 age_ms = now_ms - open_time
                 if age_ms < min_age_ms: continue
             elif open_time == 0:
-                # openTime为空说明API数据问题，用openUtc（UTC凌晨开盘价）估算
-                open_utc = t.get('openUtc', '')
-                if open_utc:
-                    try:
-                        open_price = float(open_utc)
-                        last_price = float(t.get('lastPr', 0))
-                        price_ratio = last_price / open_price if open_price > 0 else 0
-                        # openUtc > 0 且 price_ratio < 10 → 代币已上线超过24小时
-                        if open_price > 0 and price_ratio < 10:
-                            open_time = now_ms  # 用当前时间替代，保证能入库
-                            age_unknown = True   # 标记为API数据缺失
-                    except: pass
+                # openTime为空时，用K线接口验证代币是否真实可交易
+                # 能拿到K线 = 代币已上线，不需要年龄限制
+                try:
+                    test_candles = api_request('GET', '/api/v2/mix/market/candles', {
+                        'symbol': symbol, 'productType': 'usdt-futures',
+                        'granularity': '5m', 'limit': '1'
+                    })
+                    if not test_candles or len(test_candles) < 1:
+                        logger.debug(f"  过滤(K线无数据): {symbol}")
+                        continue
+                except:
+                    continue
             valid[symbol] = {
                 'symbol': symbol,
                 'lastPr': float(t.get('lastPr', 0)),
