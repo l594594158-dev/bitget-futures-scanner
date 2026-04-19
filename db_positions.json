@@ -1,1 +1,53 @@
-{"positions": [], "last_updated": null}
+{
+  "positions": [
+    {
+      "symbol": "BOMEUSDT",
+      "direction": "short",
+      "side": "sell",
+      "entry_price": 0.0005961,
+      "size": "50327.1263",
+      "peak_price": 0.0005961,
+      "open_time": "2026-04-20 01:15:21",
+      "trail_triggered": false,
+      "trail_activated_price": null,
+      "leverage": 10,
+      "margin": 3.0,
+      "entry_reason": "[BOMEUSDT] 多:3 空:4 | RSI5m=9.8(超卖) | ADX=97+DI+主导 | MACD死叉 | 缩量上涨(vol=0.03x)",
+      "change24h": 0.20096,
+      "order_id": "1429808873521975297"
+    },
+    {
+      "symbol": "PIEVERSEUSDT",
+      "direction": "short",
+      "side": "sell",
+      "entry_price": 0.84155,
+      "size": "35.6485",
+      "peak_price": 0.83757,
+      "open_time": "2026-04-20 01:17:14",
+      "trail_triggered": false,
+      "trail_activated_price": null,
+      "leverage": 10,
+      "margin": 3.0,
+      "entry_reason": "[PIEVERSEUSDT] 多:5 空:7 | MACD金叉 | 温和放量(vol=1.4x) | ADX=78+DI+主导 | RSI5m=85.5(严重超买) | RSI1h=89.4(中期超买) | 触及布林上轨",
+      "change24h": 0.50638,
+      "order_id": "1429809347180531715"
+    },
+    {
+      "symbol": "DOGSUSDT",
+      "direction": "long",
+      "side": "buy",
+      "entry_price": 3.977e-05,
+      "size": "754337.4403",
+      "peak_price": 3.977e-05,
+      "open_time": "2026-04-20 01:20:23",
+      "trail_triggered": false,
+      "trail_activated_price": null,
+      "leverage": 10,
+      "margin": 3.0,
+      "entry_reason": "[DOGSUSDT] 多:6 空:5 | RSI5m=54.1(蓄力) | MACD金叉 | ADX=90+DI+主导 | RSI1h=93.9(中期超买) | 缩量上涨(vol=0.07x)",
+      "change24h": 0.27746,
+      "order_id": "1429810139841073153"
+    }
+  ],
+  "last_updated": "2026-04-20 01:29:59"
+}
