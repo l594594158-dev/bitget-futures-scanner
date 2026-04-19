@@ -1,29 +1,29 @@
 {
-  "update_time": "2026-04-20 01:51:18",
+  "update_time": "2026-04-20 02:00:05",
   "contracts": [
     {
       "symbol": "PIEVERSEUSDT",
-      "lastPr": 0.97636,
-      "high24h": 0.9876,
+      "lastPr": 0.90455,
+      "high24h": 1.01253,
       "low24h": 0.53809,
-      "change24h": 0.78821,
-      "quoteVolume": 47103930.59988,
-      "baseVolume": 67654772.0,
-      "fundingRate": 0.00054,
+      "change24h": 0.67144,
+      "quoteVolume": 51524230.60833,
+      "baseVolume": 72380737.0,
+      "fundingRate": 0.000558,
       "openTime": 1763362015801,
-      "add_time": "2026-04-20 01:51:18"
+      "add_time": "2026-04-20 02:00:05"
     },
     {
       "symbol": "DOGSUSDT",
-      "lastPr": 3.968e-05,
+      "lastPr": 3.936e-05,
       "high24h": 4.552e-05,
       "low24h": 3.042e-05,
-      "change24h": 0.24858,
-      "quoteVolume": 2558998.907313,
-      "baseVolume": 67560694300.0,
-      "fundingRate": -0.005569,
+      "change24h": 0.2559,
+      "quoteVolume": 2667744.093095,
+      "baseVolume": 70341126400.0,
+      "fundingRate": -0.005655,
       "openTime": 1724670959110,
-      "add_time": "2026-04-20 01:51:18"
+      "add_time": "2026-04-20 02:00:05"
     }
   ]
 }
