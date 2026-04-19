@@ -1,18 +1,18 @@
 #!/usr/bin/env python3
 """
-Bitget 合约涨幅扫描器 + 10秒级监测机器人
-==========================================
+Bitget 合约涨幅扫描 + 实战交易机器人 v2
+=========================================
 功能:
-  --scan   每5分钟扫描全网537个USDT-M永续合约，日涨幅>20%则加入数据库1号
-  --monitor  每10秒检查数据库1号代币，根据K线指标判断下跌条件
-             满足条件则通过微信推送报警
+  --scan    每5分钟扫描537个USDT-M永续合约，日涨幅>20%加入数据库1号
+  --monitor 每5秒监测数据库1号代币，满足上涨/下跌条件 → 开1U逐仓20x仓位
+            移动止盈: ±3%后激活，从最高点滑落1.5%执行平仓
+            冷却时间: 同一币种每仓间隔>5分钟
 
 用法:
-  python3 futures_scanner.py --scan        # 一次性扫描（配合cron每5分钟执行）
-  python3 futures_scanner.py --monitor      # 持续监测（配合cron每分钟执行，进程常驻）
+  python3 futures_scanner.py --scan        # cron每5分钟
+  python3 futures_scanner.py --monitor    # 常驻进程，supervisor管理
 
-依赖:
-  Bitget API v2 (已配置 API Key: bg_55d7ddd792c3ebab233b4a6911f95f99)
+⚠️ 注意: 实盘交易，谨慎操作
 """
 
 import sys
@@ -34,16 +34,26 @@ from pathlib import Path
 # ==================== 配置 ====================
 WORKSPACE = '/root/.openclaw/workspace'
 DB_FILE = f'{WORKSPACE}/db_hot_contracts.json'
+POS_FILE = f'{WORKSPACE}/db_positions.json'     # 持仓数据库
 LOG_FILE = f'{WORKSPACE}/futures_scanner.log'
+ALERT_FILE = f'{WORKSPACE}/futures_alert_queue.json'
 
 API_KEY = "bg_55d7ddd792c3ebab233b4a6911f95f99"
 API_SECRET = "3d485fcacc8e5aaae096ec2526c6966edfe1e3a0a2da1627111aa0d53fab6a4c"
 PASSPHRASE = "liugang123"
 BASE_URL = "https://api.bitget.com"
 
-GAIN_THRESHOLD = 0.20      # 日涨幅阈值 20%
-MONITOR_INTERVAL = 10      # 监测间隔（秒）
-MAX_DB_SIZE = 50           # 数据库1号最多存50个代币（按日涨幅排序）
+GAIN_THRESHOLD = 0.20       # 日涨幅阈值 20%
+MONITOR_INTERVAL = 5        # 监测间隔（秒）
+MAX_DB_SIZE = 50            # 数据库1号最多50个
+POSITION_SIZE = 1.0         # 每仓保证金 1 USDT
+LEVERAGE = 20              # 杠杆倍数
+MARGIN_MODE = "isolated"    # 逐仓
+COOLDOWN_SECONDS = 300      # 开仓冷却 5分钟
+
+# 移动止盈参数
+TRAIL_TRIGGER_PCT = 0.03   # 触发门槛: 价格偏离开仓价±3%
+TRAIL_EXIT_PCT = 0.015     # 退出门槛: 从最高点滑落1.5%
 
 logging.basicConfig(
     level=logging.INFO,
@@ -62,8 +72,7 @@ def sign(msg: str, secret: str) -> str:
     mac = hmac.new(secret.encode('utf-8'), msg.encode('utf-8'), hashlib.sha256)
     return base64.b64encode(mac.digest()).decode()
 
-def api_request(method: str, path: str, params: Dict = None) -> Dict:
-    """发送带签名的API请求"""
+def api_request(method: str, path: str, params: Dict = None, body: Dict = None) -> Dict:
     timestamp = str(int(time.time() * 1000))
     url = BASE_URL + path
     sign_path = path
@@ -72,7 +81,7 @@ def api_request(method: str, path: str, params: Dict = None) -> Dict:
         url += "?" + query
         sign_path += "?" + query
 
-    body_str = ""
+    body_str = json.dumps(body) if body else ""
     msg_str = timestamp + method + sign_path + body_str
     signature = sign(msg_str, API_SECRET)
 
@@ -90,12 +99,25 @@ def api_request(method: str, path: str, params: Dict = None) -> Dict:
         resp = requests.post(url, headers=headers, data=body_str)
 
     result = resp.json()
-    if result.get('code') != '00000':
-        raise Exception(f"API Error {result.get('code')}: {result.get('msg')}")
-    return result.get('data', [])
+    if result.get('code') not in ('00000', '0000', None):
+        # 静默处理market数据的常见错误（400171/400172），交易端点错误仍上报
+        if 'candle' not in path and 'ticker' not in path:
+            logger.warning(f"API {path}: code={result.get('code')} msg={result.get('msg','')[:60]}")
+    return result.get('data')
 
 
-# ==================== 数据库1号操作 ====================
+# ==================== 持仓数据库 ====================
+def load_positions() -> Dict:
+    if os.path.exists(POS_FILE):
+        with open(POS_FILE) as f:
+            return json.load(f)
+    return {"positions": [], "last_updated": None}
+
+def save_positions(data: Dict):
+    data["last_updated"] = datetime.now().strftime('%Y-%m-%d %H:%M:%S')
+    with open(POS_FILE, 'w') as f:
+        json.dump(data, f, indent=2, ensure_ascii=False)
+
 def load_db() -> Dict:
     if os.path.exists(DB_FILE):
         with open(DB_FILE) as f:
@@ -106,26 +128,10 @@ def save_db(db: Dict):
     with open(DB_FILE, 'w') as f:
         json.dump(db, f, indent=2, ensure_ascii=False)
 
-def update_db(new_contracts: List[Dict]):
-    """更新数据库1号：合并新旧数据，按日涨幅排序"""
-    db = load_db()
-    existing = {c['symbol']: c for c in db['contracts']}
-
-    for c in new_contracts:
-        existing[c['symbol']] = c
-
-    # 重新按涨幅排序，只保留前MAX_DB_SIZE个
-    sorted_list = sorted(existing.values(), key=lambda x: x['change24h'], reverse=True)[:MAX_DB_SIZE]
-
-    db['contracts'] = sorted_list
-    db['update_time'] = datetime.now().strftime('%Y-%m-%d %H:%M:%S')
-    save_db(db)
-    return db
-
 
 # ==================== 5分钟涨幅扫描 ====================
 def scan_hot_contracts():
-    """扫描所有USDT-M永续合约，筛选日涨幅>20%的"""
+    """扫描所有USDT-M永续合约，筛选日涨幅>20%"""
     logger.info("🔍 开始扫描全网合约(日涨幅>20%)...")
     tickers = api_request('GET', '/api/v2/mix/market/tickers', {'productType': 'USDT-FUTURES'})
     if not tickers:
@@ -157,13 +163,20 @@ def scan_hot_contracts():
         logger.info(f"  🔥 {h['symbol']}: +{h['change24h']*100:.1f}% 现价${h['lastPr']}")
 
     if hot:
-        db = update_db(hot)
-        logger.info(f"📦 数据库1号已更新，共 {len(db['contracts'])} 个代币")
+        db = load_db()
+        existing = {c['symbol']: c for c in db.get('contracts', [])}
+        for c in hot:
+            existing[c['symbol']] = c
+        sorted_list = sorted(existing.values(), key=lambda x: x['change24h'], reverse=True)[:MAX_DB_SIZE]
+        db['contracts'] = sorted_list
+        db['update_time'] = datetime.now().strftime('%Y-%m-%d %H:%M:%S')
+        save_db(db)
+        logger.info(f"📦 数据库1号已更新，共 {len(sorted_list)} 个代币")
 
     return hot
 
 
-# ==================== 技术指标计算 ====================
+# ==================== 技术指标 ====================
 def compute_rsi(closes: List[float], period: int = 14) -> float:
     if len(closes) < period + 1:
         return 50.0
@@ -178,7 +191,6 @@ def compute_rsi(closes: List[float], period: int = 14) -> float:
     return 100 - (100 / (1 + rs))
 
 def compute_macd(closes: List[float]):
-    """返回 (macd, signal, histogram) """
     if len(closes) < 26:
         return None, None, None
     ema12 = pd.Series(closes).ewm(span=12, adjust=False).mean().values
@@ -199,8 +211,7 @@ def compute_bollinger(closes: List[float], period: int = 20, std_mult: float = 2
     return upper, mid, lower
 
 def compute_adx(highs: List[float], lows: List[float], closes: List[float], period: int = 14):
-    """计算ADX和DI"""
-    if len(closes) < period + 1:
+    if len(closes) < period + 2:
         return None, None, None
     try:
         highs_arr = np.array(highs)
@@ -225,14 +236,12 @@ def compute_adx(highs: List[float], lows: List[float], closes: List[float], peri
             return None, None, None
         plus_di = 100 * np.mean(plus_dm[-period:]) / atr
         minus_di = 100 * np.mean(minus_dm[-period:]) / atr
-        dx = 100 * abs(plus_di - minus_di) / (plus_di + minus_di)
-        adx = dx  # simplified
-        return adx, plus_di, minus_di
+        dx = 100 * abs(plus_di - minus_di) / (plus_di + minus_di + 1e-10)
+        return dx, plus_di, minus_di
     except:
         return None, None, None
 
-def compute_volume_ratio(volumes: List[float], period: int = 20) -> float:
-    """当前成交量 / 过去N根均量"""
+def compute_vol_ratio(volumes: List[float], period: int = 20) -> float:
     if len(volumes) < period:
         return 1.0
     avg_vol = np.mean(volumes[-period:])
@@ -241,43 +250,41 @@ def compute_volume_ratio(volumes: List[float], period: int = 20) -> float:
     return volumes[-1] / avg_vol
 
 
-# ==================== 下跌条件分析 ====================
-def analyze_downward(symbol: str) -> Tuple[bool, str]:
+# ==================== 趋势分析 ====================
+def analyze_symbol(symbol: str) -> Tuple[Optional[str], str, int]:
     """
-    分析代币是否满足"下跌条件"
-    返回: (是否满足, 分析理由)
+    分析代币是否满足上涨/下跌开仓条件
+    返回: (方向或None, 分析理由, 评分)
+    方向: 'long' = 做多, 'short' = 做空, None = 不操作
     """
     reasons = []
-    score = 0
+    long_score = 0   # 做多信号分
+    short_score = 0  # 做空信号分
 
-    # 获取5m K线 (用于短期信号)
+    # 获取5m K线
     try:
         candles_5m = api_request('GET', '/api/v2/mix/market/candles', {
-            'symbol': symbol,
-            'productType': 'usdt-futures',
-            'granularity': '5m',
-            'limit': '100'
+            'symbol': symbol, 'productType': 'usdt-futures',
+            'granularity': '5m', 'limit': '100'
         })
-    except Exception as e:
-        return False, f"K线获取失败: {e}"
+    except:
+        return None, "K线获取失败", 0
 
     if not candles_5m or len(candles_5m) < 30:
-        return False, f"K线数据不足({len(candles_5m) if candles_5m else 0}根)"
+        return None, f"K线不足({len(candles_5m) if candles_5m else 0}根)", 0
 
-    # 解析数据: [ts, open, high, low, close, vol, turnover]
     closes_5m = [float(c[4]) for c in candles_5m]
     highs_5m = [float(c[2]) for c in candles_5m]
     lows_5m = [float(c[3]) for c in candles_5m]
     vols_5m = [float(c[5]) for c in candles_5m]
 
-    # 1h K线 (用于中期信号)
+    # 获取1H K线（部分新代币不支持1H/4H，降级处理）
     try:
-        candles_1h = api_request('GET', '/api/v2/mix/market/candles', {
-            'symbol': symbol,
-            'productType': 'usdt-futures',
-            'granularity': '1h',
-            'limit': '100'
+        candles_1h_raw = api_request('GET', '/api/v2/mix/market/candles', {
+            'symbol': symbol, 'productType': 'usdt-futures',
+            'granularity': '1H', 'limit': '100'
         })
+        candles_1h = candles_1h_raw if candles_1h_raw else []
     except:
         candles_1h = []
 
@@ -286,96 +293,350 @@ def analyze_downward(symbol: str) -> Tuple[bool, str]:
     lows_1h = [float(c[3]) for c in candles_1h] if candles_1h else lows_5m
     vols_1h = [float(c[5]) for c in candles_1h] if candles_1h else vols_5m
 
-    # ========== 指标1: RSI 超买 ==========
+    price = closes_5m[-1]
+    price_change_pct = (closes_5m[-1] - closes_5m[-5]) / closes_5m[-5] if len(closes_5m) >= 5 else 0
+
+    # ========== 指标计算 ==========
     rsi_5m = compute_rsi(closes_5m)
     rsi_1h = compute_rsi(closes_1h)
-    if rsi_5m > 75:
-        score += 2
-        reasons.append(f"RSI5m={rsi_5m:.1f}>75(严重超买)")
-    elif rsi_5m > 65:
-        score += 1
-        reasons.append(f"RSI5m={rsi_5m:.1f}>65(超买)")
-
-    if rsi_1h > 70:
-        score += 2
-        reasons.append(f"RSI1h={rsi_1h:.1f}>70(中期超买)")
-
-    # ========== 指标2: MACD 顶背离 / 空头信号 ==========
-    macd_5m, signal_5m, hist_5m = compute_macd(closes_5m)
-    macd_1h, signal_1h, hist_1h = compute_macd(closes_1h)
-    if macd_5m is not None:
-        if hist_5m < -0.5:  # MACDHistogram转负
-            score += 2
-            reasons.append(f"MACD5m柱线转负({hist_5m:.4f})")
-        elif macd_5m < signal_5m:  # MACD死叉
-            score += 1
-            reasons.append("MACD5m死叉")
-
-    # ========== 指标3: 布林带上轨压制 ==========
+    macd_5m, sig_5m, hist_5m = compute_macd(closes_5m)
+    macd_1h, sig_1h, hist_1h = compute_macd(closes_1h)
     bb_upper, bb_mid, bb_lower = compute_bollinger(closes_5m)
     bb_upper_1h, _, _ = compute_bollinger(closes_1h)
+    adx_1h, plus_di, minus_di = compute_adx(highs_1h, lows_1h, closes_1h)
+    vol_r_5m = compute_vol_ratio(vols_5m)
+    vol_r_1h = compute_vol_ratio(vols_1h)
+
+    # ========== 上涨条件 (做多) ==========
+    # 1. RSI 回调至合理区间(35-60) = 蓄力
+    if 35 <= rsi_5m <= 60:
+        long_score += 2
+        reasons.append(f"RSI5m={rsi_5m:.1f}(蓄力区间)")
+    elif rsi_5m < 35:
+        long_score += 1
+        reasons.append(f"RSI5m={rsi_5m:.1f}(超卖)")
+
+    # 2. MACD 金叉或柱线转正
+    if hist_5m is not None and hist_5m > 0 and closes_5m[-1] > closes_5m[-3]:
+        long_score += 2
+        reasons.append("MACD5m金叉(动能转多)")
+    elif hist_5m is not None and hist_5m > 0:
+        long_score += 1
+        reasons.append("MACD5m柱线为正")
+
+    # 3. 放量配合上涨
+    if vol_r_5m > 1.5 and price_change_pct > 0.005:
+        long_score += 2
+        reasons.append(f"放量上涨(vol={vol_r_5m:.1f}x)")
+    elif vol_r_5m > 1.2 and price_change_pct > 0:
+        long_score += 1
+        reasons.append(f"温和放量(vol={vol_r_5m:.1f}x)")
+
+    # 4. ADX强势 + DI+主导
+    if adx_1h is not None:
+        if adx_1h > 30 and plus_di > minus_di:
+            long_score += 2
+            reasons.append(f"ADX={adx_1h:.1f}+DI+主导(趋势强)")
+        elif adx_1h > 20 and plus_di > minus_di:
+            long_score += 1
+            reasons.append(f"ADX={adx_1h:.1f}+多方排列")
+
+    # 5. 回调至布林中轨支撑
+    if bb_mid is not None and abs(price - bb_mid) / bb_mid < 0.02:
+        long_score += 1
+        reasons.append(f"回踩布林中轨支撑")
+
+    # ========== 下跌条件 (做空) ==========
+    # 1. RSI 超买
+    if rsi_5m > 75:
+        short_score += 3
+        reasons.append(f"RSI5m={rsi_5m:.1f}(严重超买)")
+    elif rsi_5m > 65:
+        short_score += 2
+        reasons.append(f"RSI5m={rsi_5m:.1f}(超买)")
+
+    if rsi_1h > 72:
+        short_score += 2
+        reasons.append(f"RSI1h={rsi_1h:.1f}(中期超买)")
+
+    # 2. MACD 死叉或柱线转负
+    if hist_5m is not None and hist_5m < -0.5:
+        short_score += 3
+        reasons.append(f"MACD5m柱线转负({hist_5m:.4f})")
+    elif macd_5m is not None and sig_5m is not None and macd_5m < sig_5m:
+        short_score += 1
+        reasons.append("MACD5m死叉")
+
+    # 3. 缩量上涨(量价背离)
+    if price_change_pct > 0.005 and vol_r_5m < 0.6:
+        short_score += 3
+        reasons.append(f"缩量上涨(vol={vol_r_5m:.2f}x, 量价背离)")
+    elif price_change_pct > 0.002 and vol_r_5m < 0.8:
+        short_score += 1
+        reasons.append(f"量能萎缩(vol={vol_r_5m:.2f}x)")
+
+    # 4. 触及/突破布林上轨
     if bb_upper is not None:
-        price = closes_5m[-1]
-        if price >= bb_upper * 0.995:  # 触及上轨
-            score += 2
+        if price >= bb_upper:
+            short_score += 2
             reasons.append(f"触及布林上轨(${bb_upper:.4f})")
         elif price >= bb_upper * 0.98:
-            score += 1
+            short_score += 1
             reasons.append(f"逼近布林上轨(${bb_upper:.4f})")
 
-    # ========== 指标4: 缩量上涨(量价背离) ==========
-    vol_ratio_5m = compute_volume_ratio(vols_5m)
-    vol_ratio_1h = compute_volume_ratio(vols_1h)
-    price_up = closes_5m[-1] > closes_5m[-5] if len(closes_5m) >= 5 else False
-    if price_up and vol_ratio_5m < 0.6:
-        score += 2
-        reasons.append(f"缩量上涨(vol_ratio={vol_ratio_5m:.2f})")
-    elif price_up and vol_ratio_5m < 0.8:
-        score += 1
-        reasons.append(f"量能萎缩(vol_ratio={vol_ratio_5m:.2f})")
-
-    # ========== 指标5: ADX减弱 + DI-上穿 ==========
-    adx_1h, plus_di, minus_di = compute_adx(highs_1h, lows_1h, closes_1h)
+    # 5. ADX趋弱 + DI-主导
     if adx_1h is not None:
         if adx_1h < 20:
-            score += 1
-            reasons.append(f"ADX1h={adx_1h:.1f}<20(趋势减弱)")
-        if minus_di is not None and plus_di is not None:
-            if minus_di > plus_di:
-                score += 2
-                reasons.append(f"DI-({minus_di:.1f})>DI+({plus_di:.1f})空头排列")
+            short_score += 2
+            reasons.append(f"ADX1h={adx_1h:.1f}(趋势减弱)")
+        if minus_di is not None and plus_di is not None and minus_di > plus_di:
+            short_score += 2
+            reasons.append(f"DI-({minus_di:.1f})>DI+({plus_di:.1f})空头排列")
 
-    # ========== 指标6: 1小时内大起大落(波动过大) ==========
-    if len(closes_1h) >= 2:
-        change_1h = abs(closes_1h[-1] - closes_1h[-2]) / closes_1h[-2] if closes_1h[-2] != 0 else 0
-        if change_1h > 0.03:  # 1小时变动>3%
-            score += 1
-            reasons.append(f"1h波动剧烈({change_1h*100:.1f}%)")
+    # ========== 决定方向 ==========
+    direction = None
+    trigger_score = 0
 
-    # 最终判断: score >= 4 认为满足下跌条件
-    trigger = score >= 4
-    reason_str = f"[{symbol}] 下跌评分:{score} | " + " | ".join(reasons)
-    return trigger, reason_str
+    if long_score >= 5 and long_score > short_score:
+        direction = 'long'
+        trigger_score = long_score
+    elif short_score >= 4 and short_score >= long_score:
+        direction = 'short'
+        trigger_score = short_score
+
+    reason_str = f"[{symbol}] 多:{long_score} 空:{short_score} | " + " | ".join(reasons)
+    return direction, reason_str, trigger_score
 
 
-# ==================== 微信推送 ====================
-def wechat_push(title: str, content: str):
-    """通过OpenClaw消息服务推送微信通知"""
+# ==================== 交易执行 ====================
+def get_current_price(symbol: str) -> float:
+    """获取当前最新价格"""
     try:
-        import subprocess
-        full_msg = f"{title}\n\n{content}"
-        result = subprocess.run(
-            ['openclaw', 'message', 'send',
-             '--channel', 'openclaw-weixin',
-             '--message', full_msg],
-            capture_output=True, text=True, timeout=15
-        )
-        if result.returncode == 0:
-            logger.info(f"📤 微信推送成功: {title}")
-        else:
-            logger.warning(f"📤 微信推送响应: {result.stdout[:200]}")
+        result = api_request('GET', '/api/v2/mix/market/ticker',
+                           {'symbol': symbol, 'productType': 'usdt-futures'})
+        if result:
+            return float(result.get('lastPr', 0))
+    except:
+        pass
+    return 0.0
+
+def place_order(symbol: str, side: str, size: str) -> Optional[Dict]:
+    """市价开仓"""
+    try:
+        data = api_request('POST', '/api/v2/mix/order/place-order', body={
+            'symbol': symbol,
+            'productType': 'usdt-futures',
+            'marginCoin': 'USDT',
+            'side': side,        # buy=做多, sell=做空
+            'orderType': 'market',
+            'size': size,
+            'leverage': str(LEVERAGE),
+            'marginMode': MARGIN_MODE,
+            'tradeSide': 'open'
+        })
+        if data:
+            return data
     except Exception as e:
-        logger.error(f"❌ 微信推送失败: {e}")
+        logger.error(f"❌ 开仓失败: {e}")
+    return None
+
+def close_position(symbol: str, side: str, size: str) -> Optional[Dict]:
+    """市价平仓"""
+    try:
+        # 平仓时 side 相反
+        close_side = 'sell' if side == 'buy' else 'buy'
+        data = api_request('POST', '/api/v2/mix/order/place-order', body={
+            'symbol': symbol,
+            'productType': 'usdt-futures',
+            'marginCoin': 'USDT',
+            'side': close_side,
+            'orderType': 'market',
+            'size': size,
+            'leverage': str(LEVERAGE),
+            'marginMode': MARGIN_MODE,
+            'tradeSide': 'close'
+        })
+        return data
+    except Exception as e:
+        logger.error(f"❌ 平仓失败: {e}")
+    return None
+
+def alert_to_queue(title: str, content: str):
+    """写入告警队列"""
+    try:
+        queue = {"alerts": [], "last_sent": None}
+        if os.path.exists(ALERT_FILE):
+            with open(ALERT_FILE) as f:
+                queue = json.load(f)
+        import uuid
+        queue["alerts"].append({
+            "id": str(uuid.uuid4())[:8],
+            "title": title,
+            "content": content,
+            "time": datetime.now().strftime('%Y-%m-%d %H:%M:%S')
+        })
+        with open(ALERT_FILE, 'w') as f:
+            json.dump(queue, f, ensure_ascii=False, indent=2)
+        logger.info(f"📤 告警入队: {title}")
+    except Exception as e:
+        logger.error(f"❌ 告警入队失败: {e}")
+
+
+# ==================== 主监测循环 ====================
+def monitor_loop():
+    logger.info("🚀 启动5秒级监测+交易模式")
+    positions = load_positions()
+    cooldown = {}  # symbol -> 上次开仓时间
+
+    while True:
+        db = load_db()
+        contracts = db.get('contracts', [])
+        if not contracts:
+            time.sleep(MONITOR_INTERVAL)
+            continue
+
+        logger.info(f"[监测] 数据库1号: {len(contracts)}个代币 | 持仓: {len(positions.get('positions',[]))}个")
+
+        for contract in contracts:
+            symbol = contract['symbol']
+            now = time.time()
+
+            # ========== 检查冷却 ==========
+            last_open = cooldown.get(symbol, 0)
+            if now - last_open < COOLDOWN_SECONDS:
+                continue  # 还在冷却中
+
+            # ========== 分析信号 ==========
+            direction, reason, score = analyze_symbol(symbol)
+            if not direction:
+                continue
+
+            # ========== 检查是否已有该币种持仓 ==========
+            existing = [p for p in positions.get('positions', []) if p['symbol'] == symbol]
+            if existing:
+                # 已有持仓，检查移动止盈
+                for pos in existing:
+                    direction_sign = 1 if pos['direction'] == 'long' else -1
+                    peak_price = pos.get('peak_price', pos['entry_price'])
+                    entry_price = pos['entry_price']
+                    current_price = get_current_price(symbol)
+
+                    if current_price == 0:
+                        continue
+
+                    price_vs_entry = (current_price - entry_price) / entry_price * direction_sign
+
+                    # 更新最高/最低价
+                    if direction_sign == 1 and current_price > peak_price:
+                        pos['peak_price'] = current_price
+                        peak_price = current_price
+                    elif direction_sign == -1 and current_price < peak_price:
+                        pos['peak_price'] = current_price
+                        peak_price = current_price
+
+                    # 检查移动止盈
+                    trail_triggered = pos.get('trail_triggered', False)
+                    if not trail_triggered:
+                        if price_vs_entry >= TRAIL_TRIGGER_PCT:
+                            pos['trail_triggered'] = True
+                            pos['trail_activated_price'] = peak_price
+                            logger.info(f"📍 移动止盈激活: {symbol} 最高价${peak_price} (偏离{(price_vs_entry)*100:.1f}%)")
+                    else:
+                        # 已激活，计算从激活价滑落了多少
+                        trail_activated = pos.get('trail_activated_price', peak_price)
+                        drawdown = (peak_price - current_price) / trail_activated if direction_sign == 1 else (current_price - peak_price) / trail_activated
+                        drawdown *= direction_sign  # 转为正值
+
+                        if drawdown >= TRAIL_EXIT_PCT:
+                            # 执行平仓
+                            logger.warning(f"🟥 移动止盈平仓: {symbol} 当前价${current_price} 从峰值${trail_activated}滑落{drawdown*100:.1f}%")
+                            close_result = close_position(symbol, pos['direction'], pos['size'])
+                            if close_result:
+                                pnl = (current_price - entry_price) * float(pos['size']) * direction_sign
+                                alert_to_queue(
+                                    f"✅ {symbol} 移动止盈平仓",
+                                    f"方向: {'做空' if pos['direction']=='short' else '做多'}\n"
+                                    f"开仓价: ${entry_price}\n平仓价: ${current_price}\n"
+                                    f"数量: {pos['size']}\n"
+                                    f"盈亏: {'+' if pnl >= 0 else ''}{pnl:.4f} USDT\n"
+                                    f"峰值: ${peak_price} 触发价: ${trail_activated}\n"
+                                    f"━━━━━━━━━━━━━━━━\n"
+                                    f"⏰ {datetime.now().strftime('%H:%M:%S')}"
+                                )
+                                # 从持仓列表移除
+                                positions['positions'] = [p for p in positions['positions'] if p['symbol'] != symbol]
+                                save_positions(positions)
+                            continue
+
+                    # 更新持仓记录中的peak_price
+                    for p in positions['positions']:
+                        if p['symbol'] == symbol:
+                            p['peak_price'] = peak_price
+
+                save_positions(positions)
+                continue
+
+            # ========== 无持仓 -> 检查是否满足开仓条件 ==========
+            current_price = get_current_price(symbol)
+            if current_price == 0:
+                continue
+
+            logger.info(f"📡 {symbol} {'🟢做多' if direction=='long' else '🔴做空'} 信号强({score}分) | {reason[:80]}")
+
+            # 计算开仓数量: 1 USDT / 当前价格 * 20倍杠杆
+            size_float = POSITION_SIZE / current_price * LEVERAGE
+            # Bitget要求size为正数，且需要取整到合适位数
+            size_str = f"{size_float:.4f}"
+
+            # 开仓
+            side = 'buy' if direction == 'long' else 'sell'
+            result = place_order(symbol, side, size_str)
+
+            if result:
+                cooldown[symbol] = now
+                entry_price = current_price
+
+                # 记录持仓
+                pos_record = {
+                    'symbol': symbol,
+                    'direction': direction,
+                    'side': side,
+                    'entry_price': entry_price,
+                    'size': size_str,
+                    'peak_price': entry_price,
+                    'open_time': datetime.now().strftime('%Y-%m-%d %H:%M:%S'),
+                    'trail_triggered': False,
+                    'trail_activated_price': None,
+                    'leverage': LEVERAGE,
+                    'margin': POSITION_SIZE,
+                    'entry_reason': reason[:200],
+                    'change24h': contract.get('change24h', 0),
+                    'order_id': result.get('orderId', '')
+                }
+                positions.setdefault('positions', []).append(pos_record)
+                save_positions(positions)
+
+                dir_text = '🟢做多' if direction == 'long' else '🔴做空'
+                alert_to_queue(
+                    f"📈 {dir_text} 开仓: {symbol}",
+                    f"{'🟢 做多' if direction=='long' else '🔴 做空'} {'+'+str(contract.get('change24h',0)*100)[:4]+'%' if direction=='long' else ''}\n"
+                    f"━━━━━━━━━━━━━━━━\n"
+                    f"代币: {symbol}\n"
+                    f"日涨幅: +{contract.get('change24h',0)*100:.1f}%\n"
+                    f"开仓价: ${entry_price}\n"
+                    f"数量: {size_str}\n"
+                    f"保证金: {POSITION_SIZE} USDT\n"
+                    f"杠杆: {LEVERAGE}x 逐仓\n"
+                    f"━━━━━━━━━━━━━━━━\n"
+                    f"📊 信号分析:\n{reason}\n"
+                    f"━━━━━━━━━━━━━━━━\n"
+                    f"⏰ {datetime.now().strftime('%Y-%m-%d %H:%M:%S')}"
+                )
+                logger.warning(f"🚨 {dir_text} 开仓: {symbol} @${entry_price} 数量{size_str}")
+            else:
+                logger.error(f"❌ 开仓失败: {symbol}")
+
+        time.sleep(MONITOR_INTERVAL)
 
 
 # ==================== 主函数 ====================
@@ -385,65 +646,13 @@ def main():
         sys.exit(1)
 
     mode = sys.argv[1]
-
     if mode == '--scan':
         scan_hot_contracts()
-
     elif mode == '--monitor':
-        logger.info("🚀 启动10秒级监测模式(数据库1号)")
-        # 记录已推送的代币(避免重复推送)
-        alerted = set()
-        push_cooldown = {}  # symbol -> 上次推送时间
-
-        while True:
-            db = load_db()
-            contracts = db.get('contracts', [])
-
-            if not contracts:
-                time.sleep(MONITOR_INTERVAL)
-                continue
-
-            logger.info(f"[监测] 数据库1号: {len(contracts)}个代币")
-
-            for contract in contracts:
-                symbol = contract['symbol']
-                change = contract.get('change24h', 0)
-
-                # 冷却机制: 同一代币至少间隔5分钟才能再次推送
-                now = time.time()
-                if symbol in push_cooldown and now - push_cooldown[symbol] < 300:
-                    continue
-
-                try:
-                    trigger, reason = analyze_downward(symbol)
-                    if trigger:
-                        # 微信推送
-                        msg = (
-                            f"🚨 合约预警\n"
-                            f"━━━━━━━━━━━━━━━━━━━━\n"
-                            f"代币: {symbol}\n"
-                            f"日涨幅: +{change*100:.1f}%\n"
-                            f"现价: ${contract.get('lastPr', '?')}\n"
-                            f"━━━━━━━━━━━━━━━━━━━━\n"
-                            f"📉 下跌信号:\n{reason}\n"
-                            f"━━━━━━━━━━━━━━━━━━━━\n"
-                            f"⏰ {datetime.now().strftime('%H:%M:%S')}"
-                        )
-                        wechat_push(f"🚨 {symbol} 下跌预警(+{change*100:.0f}%)", msg)
-                        push_cooldown[symbol] = now
-                        logger.warning(f"🚨 触发预警: {symbol} | {reason}")
-                    else:
-                        logger.debug(f"✅ {symbol} 暂无下跌信号(score依据)")
-
-                except Exception as e:
-                    logger.error(f"❌ 分析{symbol}失败: {e}")
-
-            time.sleep(MONITOR_INTERVAL)
-
+        monitor_loop()
     else:
         print("未知模式:", mode)
         sys.exit(1)
-
 
 if __name__ == '__main__':
     main()
