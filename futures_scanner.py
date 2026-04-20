@@ -477,8 +477,13 @@ def place_order(symbol, side, size):
     return None
 
 def close_position(symbol, direction, size):
+    """
+    对冲模式下平仓：side同向 + tradeSide='close'
+    - direction='short' → 平空 → side='sell'
+    - direction='long'  → 平多 → side='buy'
+    """
     try:
-        close_side = 'sell' if direction == 'buy' else 'buy'
+        close_side = 'sell' if direction == 'short' else 'buy'
         data = api_request('POST', '/api/v2/mix/order/place-order', body={
             'symbol': symbol, 'productType': 'usdt-futures', 'marginCoin': 'USDT',
             'side': close_side, 'orderType': 'market', 'size': size,
