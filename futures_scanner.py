@@ -62,8 +62,8 @@ POSITION_SIZE = 2.0
 LEVERAGE = 10
 MARGIN_MODE = "isolated"
 COOLDOWN_SECONDS = 300
-TRAIL_TRIGGER_PCT = 0.06
-TRAIL_EXIT_PCT = 0.04
+TRAIL_TRIGGER_PCT = 0.04
+TRAIL_EXIT_PCT = 0.03
 # ==================== P0 修复：止损 + 波动率调仓 ====================
 STOP_LOSS_PCT = 0.03        # 固定止损：亏损3%立即止损（避免10x杠杆被强平）
 VOL_THRESHOLD_PCT = 0.005   # ATR/price > 0.5% 认定为高波动
