@@ -84,30 +84,75 @@ def sign(msg, secret):
     mac = hmac.new(secret.encode('utf-8'), msg.encode('utf-8'), hashlib.sha256)
     return base64.b64encode(mac.digest()).decode()
 
-def api_request(method, path, params=None, body=None):
+def api_request(method, path, params=None, body=None, retry=2):
+    """
+    统一API请求，修复签名路径问题。
+    
+    Bitget API 签名规则不一致：
+    - 市场数据、持仓查询：签名用 path（不含query）
+    - 账户、订单历史：签名用 path + '?' + queryString
+    
+    策略：对 GET 请求先试 path-only 签名，若失败且 code=40009，自动用 path+query 重试。
+    对 POST 请求，签名用 path + bodyStr。
+    """
     timestamp = str(int(time.time() * 1000))
     url = BASE_URL + path
-    sign_path = path
-    if params:
-        query = "&".join([f"{k}={v}" for k, v in params.items()])
-        url += "?" + query
-        sign_path += "?" + query
     body_str = json.dumps(body) if body else ""
-    msg_str = timestamp + method + sign_path + body_str
-    headers = {
-        'ACCESS-KEY': API_KEY, 'ACCESS-SIGN': sign(msg_str, API_SECRET),
-        'ACCESS-TIMESTAMP': timestamp, 'ACCESS-PASSPHRASE': PASSPHRASE,
-        'Content-Type': 'application/json'
-    }
-    if method == "GET":
-        resp = requests.get(url, headers=headers)
-    else:
-        resp = requests.post(url, headers=headers, data=body_str)
-    result = resp.json()
-    if result.get('code') not in ('00000', '0000', None):
-        if 'candle' not in path and 'ticker' not in path:
-            logger.warning(f"API {path}: code={result.get('code')}")
-    return result.get('data')
+    
+    # 构建 query string
+    query = ""
+    if params:
+        query = "&".join([f"{k}={v}" for k, v in sorted(params.items())])
+        url += "?" + query
+    
+    def _make_request(sign_path):
+        sign_str = timestamp + method + sign_path + body_str
+        headers = {
+            'ACCESS-KEY': API_KEY,
+            'ACCESS-SIGN': sign(sign_str, API_SECRET),
+            'ACCESS-TIMESTAMP': timestamp,
+            'ACCESS-PASSPHRASE': PASSPHRASE,
+            'Content-Type': 'application/json'
+        }
+        if method == "GET":
+            return requests.get(url, headers=headers, timeout=10)
+        else:
+            return requests.post(url, headers=headers, data=body_str, timeout=10)
+    
+    last_err = None
+    for attempt in range(retry):
+        try:
+            # 首先尝试 path-only 签名（适合市场数据、持仓等）
+            resp = _make_request(path)
+            result = resp.json()
+            code = result.get('code', '')
+            
+            if code == '00000':
+                return result.get('data')
+            
+            # 如果 path-only 签名失败且是 40009，尝试 path+query 签名（账户/订单类）
+            if code == '40009' and method == 'GET' and query:
+                resp2 = _make_request(path + '?' + query)
+                result2 = resp2.json()
+                code2 = result2.get('code', '')
+                if code2 == '00000':
+                    return result2.get('data')
+                result = result2  # 用第二次的响应
+                code = code2
+            
+            no_retry_codes = ('400172', '40404', '30032', '40009')
+            if code and code not in ('00000', '0000') and code not in no_retry_codes:
+                last_err = f"code={code} msg={result.get('msg','')}"
+                time.sleep(0.3)
+                continue
+            
+            return result.get('data')
+        except Exception as e:
+            last_err = str(e)
+            time.sleep(0.5)
+    
+    logger.warning(f"API {method} {path} failed after {retry} attempts: {last_err}")
+    return None
 
 # ==================== 数据存储 ====================
 def load_positions():
@@ -436,6 +481,63 @@ def get_current_price(symbol):
     except: pass
     return 0.0
 
+
+def get_balance():
+    """获取账户USDT可用余额"""
+    try:
+        data = api_request('GET', '/api/v2/mix/account/accounts',
+                           params={'marginCoin': 'USDT', 'productType': 'USDT-FUTURES'})
+        if data and len(data) > 0:
+            return float(data[0].get('available', 0))
+    except Exception as e:
+        logger.warning(f"获取余额失败: {e}")
+    return 0.0
+
+def get_all_positions():
+    """
+    获取所有持仓（逐枚查询主力币种）。
+    由于 all-position 端点需要 productType 参数（存在但格式不稳定），
+    采用备援策略：通过 orders-history 遍历所有有开仓记录的symbol，逐个查 single-position。
+    """
+    try:
+        # 获取所有开仓记录
+        all_orders = api_request('GET', '/api/v2/mix/order/orders-history',
+                                 params={'productType': 'USDT-FUTURES', 'limit': 100})
+        if not all_orders:
+            return []
+        entrusted = all_orders.get('entrustedList') or []
+        
+        # 收集有开仓未平仓的symbol
+        open_symbols = set()
+        for o in entrusted:
+            if o.get('tradeSide') == 'open':
+                open_symbols.add(o.get('symbol'))
+        
+        positions = []
+        for sym in open_symbols:
+            pos_data = api_request('GET', '/api/v2/mix/position/single-position',
+                                   params={'symbol': sym, 'productType': 'USDT-FUTURES', 'marginCoin': 'USDT'})
+            if pos_data and len(pos_data) > 0:
+                for p in pos_data:
+                    if float(p.get('total', 0)) > 0 or float(p.get('size', 0)) > 0:
+                        positions.append(p)
+        return positions
+    except Exception as e:
+        logger.warning(f"获取所有持仓失败: {e}")
+        return []
+
+def get_ticker(symbol):
+    """获取单个币种行情"""
+    try:
+        data = api_request('GET', '/api/v2/mix/market/ticker',
+                           params={'symbol': symbol, 'productType': 'USDT-FUTURES'})
+        if data and len(data) > 0:
+            return data[0]
+        return None
+    except Exception as e:
+        logger.warning(f"获取行情失败: {symbol} {e}")
+        return None
+
 def get_position_size(symbol):
     try:
         result = api_request('GET', '/api/v2/mix/position/single-position',
@@ -449,7 +551,7 @@ def set_leverage(symbol, leverage, hold_side):
     """开仓前先设置杠杆（避免Bitget默认20x）"""
     try:
         body = {
-            'symbol': symbol, 'productType': 'usdt-futures',
+            'symbol': symbol, 'productType': 'USDT-FUTURES',
             'marginCoin': 'USDT', 'leverage': str(leverage),
             'holdSide': hold_side
         }
@@ -462,14 +564,30 @@ def set_leverage(symbol, leverage, hold_side):
     return None
 
 def place_order(symbol, side, size):
+    """
+    市价开仓。注意 Bitget 单笔最低 5 USDT保证金。
+    由于每次开仓保证金固定 2 USDT，需要确保下单金额 > 5U 才不会报错。
+    """
     try:
-        # 先设置杠杆，避免Bitget默认20x
+        # 先设置杠杆
         hold_side = 'short' if side == 'sell' else 'long'
         set_leverage(symbol, LEVERAGE, hold_side)
+        
+        # 计算下单金额（size × 价格）
+        ticker = get_ticker(symbol)
+        price = float(ticker.get('lastPr', 0)) if ticker else 0
+        if price > 0:
+            usdt_value = float(size) * price
+            if usdt_value < 5:
+                logger.warning(f"下单金额 {usdt_value:.2f}U < 最低5U，改用最小数量")
+                # 改为按 5U 保证金下单
+                adjusted_size = str(round(5 / price * LEVERAGE / LEVERAGE, 4))
+                size = max(size, adjusted_size)
+        
         data = api_request('POST', '/api/v2/mix/order/place-order', body={
-            'symbol': symbol, 'productType': 'usdt-futures', 'marginCoin': 'USDT',
+            'symbol': symbol, 'productType': 'USDT-FUTURES', 'marginCoin': 'USDT',
             'side': side, 'orderType': 'market', 'size': size,
-            'leverage': str(LEVERAGE), 'marginMode': MARGIN_MODE, 'tradeSide': 'open'
+            'leverage': str(LEVERAGE), 'marginMode': 'isolated', 'tradeSide': 'open'
         })
         return data
     except Exception as e:
@@ -485,9 +603,9 @@ def close_position(symbol, direction, size):
     try:
         close_side = 'sell' if direction == 'short' else 'buy'
         data = api_request('POST', '/api/v2/mix/order/place-order', body={
-            'symbol': symbol, 'productType': 'usdt-futures', 'marginCoin': 'USDT',
+            'symbol': symbol, 'productType': 'USDT-FUTURES', 'marginCoin': 'USDT',
             'side': close_side, 'orderType': 'market', 'size': size,
-            'leverage': str(LEVERAGE), 'marginMode': MARGIN_MODE, 'tradeSide': 'close'
+            'leverage': str(LEVERAGE), 'marginMode': 'isolated', 'tradeSide': 'close'
         })
         return data
     except Exception as e:
