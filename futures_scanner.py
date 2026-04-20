@@ -65,7 +65,7 @@ COOLDOWN_SECONDS = 300
 TRAIL_TRIGGER_PCT = 0.04
 TRAIL_EXIT_PCT = 0.03
 # ==================== P0 修复：止损 + 波动率调仓 ====================
-STOP_LOSS_PCT = 0.03        # 固定止损：亏损3%立即止损（避免10x杠杆被强平）
+FIXED_STOP_PCT = 0.09      # 固定止损：亏损9%立即止损（与移动止盈并存）
 VOL_THRESHOLD_PCT = 0.005   # ATR/price > 0.5% 认定为高波动
 VOL_MULTIPLIER = 3.0        # 高波动时仓位缩减倍数上限
 MIN_POS_RATIO = 0.3         # 最小仓位比例（不低于30%的正常仓位）
@@ -555,6 +555,23 @@ def monitor_loop():
                     if cp == 0: continue
 
                     pv = (cp - ep) / ep * ds
+
+                    # ===== 固定止损（与移动止盈并存）=====
+                    if pv <= -FIXED_STOP_PCT:
+                        logger.warning(f"🛑 固定止损平仓: {symbol} 亏损{pv*100:.2f}% 平仓价${cp}")
+                        cr = close_position(symbol, pos['direction'], pos['size'])
+                        if cr:
+                            pnl = (cp - ep) * float(pos['size']) * ds
+                            alert_to_queue(f"🛑 {symbol} 固定止损平仓",
+                                f"方向: {'做空' if pos['direction']=='short' else '做多'}\n"
+                                f"开仓价: ${ep}\n平仓价: ${cp}\n"
+                                f"数量: {pos['size']}\n盈亏: {'+' if pnl>=0 else ''}{pnl:.4f} USDT\n"
+                                f"止损线: -{FIXED_STOP_PCT*100:.1f}% 实际亏损: {pv*100:.2f}%\n━━━━━━━━━━━━━━━━\n"
+                                f"⏰ {datetime.now().strftime('%Y-%m-%d %H:%M:%S')}"
+                            )
+                            positions['positions'] = [p for p in positions['positions'] if p['symbol'] != symbol]
+                            save_positions(positions); continue
+
                     # 更新峰值
                     if ds == 1 and cp > peak: peak = cp
                     elif ds == -1 and cp < peak: peak = cp
