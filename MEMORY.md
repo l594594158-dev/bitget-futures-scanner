@@ -148,6 +148,13 @@
 
 ## 2026-04-20 更新：合约机器人重大Bug修复
 
+### 🔴 Bug 4：对冲模式平仓side方向反了（4月20日修复）
+- **症状**：`close_position` 返回None/22002，移动止盈无法执行
+- **根因**：Bitget对冲模式下，平仓用同向side（不是反向）
+- **正确**：空单平仓 → `side='sell'`；多单平仓 → `side='buy'`
+- **之前**：代码用了反向，导致平仓一直失败
+- **修复**：`close_side = 'sell' if direction == 'short' else 'buy'`
+
 ### 🔴 Bug 1：setLeverage endpoint 路径错误（致命，4月20日修复）
 - **错误路径**：`/api/v2/mix/position/setLeverage` → 40404 NOT FOUND
 - **正确路径**：`POST /api/v2/mix/account/set-leverage`
