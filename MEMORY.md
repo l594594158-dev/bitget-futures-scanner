@@ -145,3 +145,38 @@
 - 新PID：821477（2026-04-17 20:33 启动）
 - 进程文件：trading_bot.py（美股现货）
 - 合约进程：PID 555772（eth_futures_trader.py，正常运行）
+
+## 2026-04-20 更新：合约机器人重大Bug修复
+
+### 🔴 Bug 1：setLeverage endpoint 路径错误（致命，4月20日修复）
+- **错误路径**：`/api/v2/mix/position/setLeverage` → 40404 NOT FOUND
+- **正确路径**：`POST /api/v2/mix/account/set-leverage`
+- **影响**：开仓前杠杆设置失败，Bitget默认20x，导致实际杠杆是预期的2倍
+- **症状**：代码传 `leverage='10'` 但实际成交是20x
+- **修复**：新增 `set_leverage()` 函数，在 `place_order()` 前先调用正确路径
+
+### 🔴 Bug 2：手动平仓后冷却时间不重置（4月20日修复）
+- **症状**：手动平仓后，机器人立即检测到"仓位没了"就反向开仓
+- **原因**：只记录了开仓时的 cooldown，手动平仓检测路径漏了
+- **修复**：检测到 real_size<=0 时，同时写入 cooldown[symbol] = now
+
+### 🔴 Bug 3：f-string 格式符内条件表达式语法错误
+- **症状**：`f"{value:.5f if value else 'N/A'}"` → ValueError
+- **修复**：移除格式符内的条件，改为 `f"{value:.5f}"`
+
+### ⚠️ 移动止盈参数（当前值，2026-04-20）
+```python
+TRAIL_TRIGGER_PCT = 0.06  # 盈利6%激活跟踪
+TRAIL_EXIT_PCT = 0.04    # 从峰值回撤4%触发退出
+```
+
+### ⚠️ 止损：未启用（用户选择不设止损）
+
+### 合约机器人文件
+- 主文件：`futures_scanner.py`（监测+交易）
+- 日志：`futures_scanner.log` / `futures_monitor.out.log`
+- 持仓：`db_positions.json`（本地记录，与Bitget同步）
+- 热点库：`db_hot_contracts.json`（DB1，入库条件日涨幅>20%）
+- 冷却：`db_cooldown.json`（5分钟同标的冷却）
+- 告警队列：`futures_alert_queue.json`
+- 推送脚本：`send_wechat.py`（通过gateway API发送微信）

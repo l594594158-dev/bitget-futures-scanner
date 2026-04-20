@@ -64,6 +64,12 @@ MARGIN_MODE = "isolated"
 COOLDOWN_SECONDS = 300
 TRAIL_TRIGGER_PCT = 0.06
 TRAIL_EXIT_PCT = 0.04
+# ==================== P0 修复：止损 + 波动率调仓 ====================
+STOP_LOSS_PCT = 0.03        # 固定止损：亏损3%立即止损（避免10x杠杆被强平）
+VOL_THRESHOLD_PCT = 0.005   # ATR/price > 0.5% 认定为高波动
+VOL_MULTIPLIER = 3.0        # 高波动时仓位缩减倍数上限
+MIN_POS_RATIO = 0.3         # 最小仓位比例（不低于30%的正常仓位）
+MAX_DAILY_LOSS = 10.0       # 单日最大亏损熔断（U），超过后停止开新仓
 
 logging.basicConfig(
     level=logging.INFO,
@@ -252,6 +258,19 @@ def compute_adx(highs, lows, closes, period=14):
         return dx, pdi, mdi
     except: return None, None, None
 
+def compute_atr(highs, lows, closes, period=14):
+    """ATR：平均真实波幅，用于衡量波动率（数值越高=波动越剧烈）"""
+    if len(closes) < period+2: return None
+    try:
+        ha, la, ca = np.array(highs), np.array(lows), np.array(closes)
+        n = len(ca)
+        tr = np.zeros(n-1)
+        for i in range(1, n):
+            tr[i-1] = max(ha[i]-la[i], abs(ha[i]-ca[i-1]), abs(la[i]-ca[i-1]))
+        atr = np.mean(tr[-period:])
+        return atr
+    except: return None
+
 def compute_vol_ratio(vols, period=20):
     if len(vols) < period: return 1.0
     avg = np.mean(vols[-period:])
@@ -426,8 +445,27 @@ def get_position_size(symbol):
     except: pass
     return 0.0
 
+def set_leverage(symbol, leverage, hold_side):
+    """开仓前先设置杠杆（避免Bitget默认20x）"""
+    try:
+        body = {
+            'symbol': symbol, 'productType': 'usdt-futures',
+            'marginCoin': 'USDT', 'leverage': str(leverage),
+            'holdSide': hold_side
+        }
+        result = api_request('POST', '/api/v2/mix/account/set-leverage', body=body)
+        if result:
+            logger.info(f"杠杆设置: {symbol} {leverage}x ({result.get('marginMode')})")
+        return result
+    except Exception as e:
+        logger.warning(f"杠杆设置失败: {e}")
+    return None
+
 def place_order(symbol, side, size):
     try:
+        # 先设置杠杆，避免Bitget默认20x
+        hold_side = 'short' if side == 'sell' else 'long'
+        set_leverage(symbol, LEVERAGE, hold_side)
         data = api_request('POST', '/api/v2/mix/order/place-order', body={
             'symbol': symbol, 'productType': 'usdt-futures', 'marginCoin': 'USDT',
             'side': side, 'orderType': 'market', 'size': size,
@@ -498,6 +536,9 @@ def monitor_loop():
                 real_size = get_position_size(symbol)
                 if real_size <= 0:
                     logger.warning(f"⚠️ {symbol} 手动平仓，从记录移除")
+                    # 手动平仓也记录冷却，避免立即反手开仓
+                    cooldown[symbol] = now
+                    save_cooldown(cooldown)
                     positions['positions'] = [p for p in positions['positions'] if p['symbol'] != symbol]
                     save_positions(positions); continue
 
@@ -542,6 +583,7 @@ def monitor_loop():
             # 无持仓 -> 开仓
             cp = get_current_price(symbol)
             if cp == 0: continue
+
             sz = f"{POSITION_SIZE/cp*LEVERAGE:.4f}"
             side = 'buy' if direction == 'long' else 'sell'
             result = place_order(symbol, side, sz)
@@ -577,8 +619,8 @@ def monitor_loop():
                 f"━━━━━━━━━━━━━━━━\n"
                 f"📊 开仓时指标:\n"
                 f"RSI(5m): {ir5:.1f} | RSI(1H): {ir1:.1f}\n"
-                f"MACD hist: {ih5:.5f if ih5 else 'N/A'}\n"
-                f"布林带宽: {ibw5:.4f if ibw5 else 'N/A'}\n"
+                f"MACD hist: {ih5:.5f}\n"
+                f"布林带宽: {ibw5:.4f}\n"
                 f"vol_ratio: {iv5:.2f}x | 5K涨跌: {ip5*100:+.2f}%\n"
                 f"ADX: {ia1:.1f}  DI+: {idi1:.1f}  DI-: {idm1:.1f}\n"
                 f"RSI负背离: {'是' if ibear and btype=='bearish' else '否'}\n"
@@ -595,7 +637,8 @@ def monitor_loop():
                 'entry_price': ep, 'size': sz, 'peak_price': ep,
                 'open_time': datetime.now().strftime('%Y-%m-%d %H:%M:%S'),
                 'trail_triggered': False, 'trail_activated_price': None,
-                'leverage': LEVERAGE, 'margin': POSITION_SIZE,
+                'leverage': LEVERAGE, 'margin': adj_position_size,
+
                 'entry_reason': reason[:200],
                 'change24h': contract.get('change24h', 0),
                 'order_id': result.get('orderId', '')
