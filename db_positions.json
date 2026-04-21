@@ -6,7 +6,7 @@
       "side": "buy",
       "entry_price": 0.1136,
       "size": 176.0,
-      "peak_price": 0.1147,
+      "peak_price": 0.1148,
       "open_time": "2026-04-20 23:45:54",
       "trail_triggered": false,
       "trail_activated_price": null,
@@ -33,22 +33,6 @@
       "order_id": ""
     },
     {
-      "symbol": "BASEDUSDT",
-      "direction": "long",
-      "side": "buy",
-      "entry_price": 0.1092,
-      "size": 183.0,
-      "peak_price": 0.1299,
-      "open_time": "2026-04-21 02:55:08",
-      "trail_triggered": true,
-      "trail_activated_price": 0.1188,
-      "leverage": 10,
-      "margin": 1.99836,
-      "unrealized_pl": 0.0183,
-      "liquidation_price": 0.099332929048,
-      "order_id": ""
-    },
-    {
       "symbol": "GUNUSDT",
       "direction": "long",
       "side": "buy",
@@ -70,7 +54,7 @@
       "side": "buy",
       "entry_price": 7.799,
       "size": 2.0,
-      "peak_price": 7.912,
+      "peak_price": 7.916,
       "open_time": "2026-04-21 04:50:18",
       "trail_triggered": false,
       "trail_activated_price": null,
@@ -86,7 +70,7 @@
       "side": "buy",
       "entry_price": 0.06394,
       "size": 312.0,
-      "peak_price": 0.06815,
+      "peak_price": 0.06855,
       "open_time": "2026-04-21 06:36:44",
       "trail_triggered": false,
       "trail_activated_price": null,
@@ -95,7 +79,23 @@
       "unrealized_pl": 0.078,
       "liquidation_price": 0.059057881774,
       "order_id": ""
+    },
+    {
+      "symbol": "RAVEUSDT",
+      "direction": "long",
+      "side": "buy",
+      "entry_price": 0.999907,
+      "size": 20.0,
+      "peak_price": 1.05198,
+      "open_time": "2026-04-21 09:25:12",
+      "trail_triggered": false,
+      "trail_activated_price": null,
+      "leverage": 10,
+      "margin": 2.00764,
+      "unrealized_pl": 0.07766,
+      "liquidation_price": 0.923157840723,
+      "order_id": ""
     }
   ],
-  "last_updated": "2026-04-21 09:20:57"
+  "last_updated": "2026-04-21 09:40:45"
 }

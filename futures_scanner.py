@@ -373,6 +373,90 @@ def compute_momentum_slowdown(closes, vols, period=10):
 
 
 # ==================== 信号分析 v4 ====================
+# ==================== 做空信号配置（可单独调整）====================
+SHORT_CONFIG = {
+    # ── 主模式：RSI负背离型 ──
+    'require_rsi_div': True,          # 是否要求RSI负背离（True=必须，False=跳过）
+    'adx_min': 20,                    # ADX最小值（趋势需明显）
+    'adx_max': 75,                    # ADX>此值则禁止做空（强趋势易延续，75≈ADX极强）
+    'di_minus_stronger': True,        # DI-必须大于DI+（空头主导）
+    'bb_dev_threshold': 2.0,          # 布林偏离中轨幅度阈值（%）
+    'vol_weak_threshold': 0.5,        # 缩量阈值（vr < 此值 = 缩量滞涨）
+    'momentum_slowdown_min': 0.5,     # 动量衰竭最小值
+    'vr_strong_for_bb': 1.5,          # 放量时vr阈值（vr>此值 = 放量）
+    'adx_for_strong_vol': 25,         # 放量时要求ADX>此值
+    'extra_require': 1,               # 附加条件至少满足几条（0=不要求）
+
+    # ── 暴涨快捷模式（日涨幅>阈值时启用，跳过RSI负背离）──
+    'surge_mode_enabled': True,       # 开启暴涨快捷模式
+    'surge_day_change_thresh': 0.15, # 触发暴涨模式的日涨幅阈值（15%以上）
+    'surge_adx_min': 25,              # 暴涨模式ADX最小值（放宽）
+    'surge_retrace_min': 0.05,       # 从日内高点最小回落比例（5%）
+    'surge_vr_max': 1.5,             # 暴涨模式：缩量（vr < 此值）
+    'surge_bb_dev': 1.0,             # 暴涨模式：布林偏离度（%）
+    'surge_adx_max': 85,             # 暴涨模式ADX上限（极端行情另论）
+}
+
+def check_short_signal(price, c5, c1, change24h,
+                       has_bear_div, bear_div_type,
+                       adx1, dip1, dim1,
+                       bb_up5, bb_mid5, bb_lo5, bb_dev,
+                       vr5, mom_slowdown, slowdown_deg,
+                       extra_short):
+    """
+    独立的做空信号判断函数（可独立于analyze_symbol调用和测试）
+    支持两种模式：主模式（RSI负背离）和暴涨快捷模式
+    """
+    cfg = SHORT_CONFIG
+    reasons = []
+
+    # ── 判断使用哪种模式 ──
+    use_surge = cfg['surge_mode_enabled'] and change24h >= cfg['surge_day_change_thresh']
+
+    if use_surge:
+        # ══ 暴涨快捷模式：不用等RSI负背离 ══
+        # 条件①：ADX在合理区间（趋势强但不极端）
+        c1_surge = adx1 and cfg['surge_adx_min'] <= adx1 <= cfg['surge_adx_max']
+        # 条件②：从日内高点回落（高位滞涨）
+        # 用5m K线计算日内高点
+        hi5 = [float(c[2]) for c in c5] if c5 else []
+        peak_today = max(hi5[-60:]) if len(hi5) >= 12 else max(hi5[-len(hi5):])  # 最近12根5m≈1小时
+        retrace_pct = (peak_today - price) / peak_today if peak_today > 0 else 0
+        c2_surge = retrace_pct >= cfg['surge_retrace_min']
+        # 条件③：缩量或布林偏离
+        c3_surge = vr5 < cfg['surge_vr_max'] or bb_dev >= cfg['surge_bb_dev']
+        # 附加条件
+        extra_ok = len(extra_short) >= cfg['extra_require']
+
+        short_ok = c1_surge and c2_surge and c3_surge and extra_ok
+        reasons.append(
+            f"做空[暴涨🚀]: ①ADX={adx1:.1f}∈[{cfg['surge_adx_min']},{cfg['surge_adx_max']}]={'✅' if c1_surge else '❌'} "
+            f"②回落{retrace_pct*100:.1f}%>={cfg['surge_retrace_min']*100:.0f}%={'✅' if c2_surge else '❌'} "
+            f"③布林偏离={bb_dev:.1f}%/vr={vr5:.2f}={'✅' if c3_surge else '❌'} "
+            f"④附加={'✅' if extra_ok else '❌'}{extra_short}"
+        )
+    else:
+        # ══ 主模式：RSI负背离型 ══
+        if cfg['require_rsi_div']:
+            c1 = has_bear_div and bear_div_type == 'bearish'
+        else:
+            c1 = True  # 不要求RSI背离
+        c2 = adx1 and cfg['adx_min'] <= adx1 <= cfg['adx_max'] and (
+            dim1 > dip1 if cfg['di_minus_stronger'] else True)
+        c3 = bb_dev >= cfg['bb_dev_threshold']
+        extra_ok = len(extra_short) >= cfg['extra_require']
+
+        short_ok = c1 and c2 and c3 and extra_ok
+        reasons.append(
+            f"做空[主模式📉]: ①RSI负背离={'✅' if c1 else '❌'} "
+            f"②ADX={adx1:.1f}∈[{cfg['adx_min']},{cfg['adx_max']}]={'✅' if c2 else '❌'} "
+            f"③布林偏离={bb_dev:.1f}%>={cfg['bb_dev_threshold']}%={'✅' if c3 else '❌'} "
+            f"④附加={'✅' if extra_ok else '❌'}{extra_short}"
+        )
+
+    return short_ok, " | ".join(reasons)
+
+
 def analyze_symbol(symbol):
     """
     基于特定条件组合的开仓信号判断（AND逻辑）
@@ -403,6 +487,13 @@ def analyze_symbol(symbol):
     lo1 = [float(c[3]) for c in c1] if c1 else lo5
 
     price = cl5[-1]
+    # 获取真实24h涨幅（用于暴涨快捷模式判断）
+    try:
+        ticker = api_request('GET', '/api/v2/mix/market/ticker',
+                            {'symbol': symbol, 'productType': 'USDT-FUTURES'})
+        real_change24h = float(ticker[0].get('change24h', 0)) if ticker else 0
+    except:
+        real_change24h = 0
     pc5 = (cl5[-1]-cl5[-5])/cl5[-5] if len(cl5)>=5 else 0
 
     rsi5 = compute_rsi(cl5)
@@ -458,32 +549,23 @@ def analyze_symbol(symbol):
     )
 
     # ===================== 做空条件 =====================
-    # ① RSI负背离（反转信号，需缩量或中性量配合）
-    cond1_short = has_bear_div and bear_div_type == 'bearish'
-    # ② 趋势向下：ADX>20 且 DI->DI+，放量时要求更严格
-    cond2_short = adx1 and adx1 > 20 and dim1 > dip1
-    # ③ 布林上轨附近 + 量能支持
-    #    - 放量时(vr>1.5)：需价格接近上轨且ADX>25
-    #    - 缩量时(vr<0.5)：价格偏离中轨>2%即可（回落预期）
-    cond3_short = False
-    if vr_strong:
-        cond3_short = bb_up5 and price >= bb_up5 and adx1 and adx1 > 25
-    else:  # 缩量或中性
-        cond3_short = bb_dev > 2.0 or (bb_up5 and price >= bb_up5 * 0.98)
-    # ④ 附加：量价背离(缩量上涨→可能回调) 或 动量衰竭 或 放量确认
+    # 附加条件（做空和做多共用的量能判断）
     extra_short = []
     if vr_weak: extra_short.append(f"缩量滞涨(vol={vr5:.2f}x)")
     if vr_strong: extra_short.append(f"放量确认(vol={vr5:.2f}x)")
-    if mom_slowdown and slowdown_deg > 0.5: extra_short.append(f"动量衰竭({slowdown_deg:.1f})")
-    cond4_short = len(extra_short) >= 1 and cond1_short and cond2_short
+    if mom_slowdown and slowdown_deg > SHORT_CONFIG.get('momentum_slowdown_min', 0.5):
+        extra_short.append(f"动量衰竭({slowdown_deg:.1f})")
 
-    short_ok = cond1_short and cond2_short and cond3_short and cond4_short
-    reasons.append(
-        f"做空: ①RSI负背离={'✅' if cond1_short else '❌'} "
-        f"②ADX>20+DI-={'✅' if cond2_short else '❌'} "
-        f"③布林+量={'✅' if cond3_short else '❌'} "
-        f"④附加={'✅' if cond4_short else '❌'}{extra_short}"
+    # 调用独立做空判断函数
+    short_ok, short_reason = check_short_signal(
+        price, c5, c1, real_change24h,
+        has_bear_div, bear_div_type,
+        adx1, dip1, dim1,
+        bb_up5, bb_mid5, bb_lo5, bb_dev,
+        vr5, mom_slowdown, slowdown_deg,
+        extra_short
     )
+    reasons.append(short_reason)
 
     direction = None
     trigger_score = 0
