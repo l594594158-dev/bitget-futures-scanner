@@ -479,7 +479,7 @@ def analyze_symbol(symbol):
         adx1, dip1, dim1,
         bb_up5, bb_mid5, bb_lo5, bb_dev,
         vr5, vr1, mom_slowdown, slowdown_deg,
-            extra_short
+        extra_short
     )
     reasons.append(short_reason)
 
