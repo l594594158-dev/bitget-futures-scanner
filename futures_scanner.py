@@ -62,7 +62,7 @@ POSITION_SIZE = 2.0
 LEVERAGE = 10
 MARGIN_MODE = "isolated"
 COOLDOWN_SECONDS = 300
-TRAIL_TRIGGER_PCT = 0.08    # 移动止盈触发：盈利≥8%激活
+TRAIL_TRIGGER_PCT = 0.06    # 移动止盈触发：盈利≥6%激活
 TRAIL_EXIT_PCT = 0.04       # 移动止盈退出：从峰值回撤4%
 # ==================== P0 修复：止损 + 波动率调仓 ====================
 FIXED_STOP_PCT = 0.09      # 固定止损：亏损9%立即止损（与移动止盈并存）
@@ -394,7 +394,7 @@ SHORT_CONFIG = {
     'surge_retrace_min': 0.05,       # 从日内高点最小回落比例（5%）
     'surge_vr_max': 1.5,             # 暴涨模式：5分钟+1小时双重缩量（vr5 AND vr1 同时 < 此值）
     'surge_bb_dev': 1.0,             # 暴涨模式：布林偏离度（%）
-    'surge_adx_max': 85,             # 暴涨模式ADX上限（极端行情另论）
+    'surge_adx_max': 70,             # 暴涨模式ADX上限（趋势过强不做空，ADX>70=强趋势）
 }
 
 def check_short_signal(price, c5, c1, change24h,
@@ -973,7 +973,6 @@ def monitor_loop():
                         {'productType': 'USDT-FUTURES', 'marginCoin': 'USDT', 'symbol': symbol})
                     if pos_data and len(pos_data) > 0:
                         p = pos_data[0]
-                        from datetime import datetime
                         pos = {
                             'symbol': symbol,
                             'direction': 'short' if p.get('holdSide') == 'short' else 'long',
