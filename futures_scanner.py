@@ -418,7 +418,7 @@ SHORT_CONFIG = {
     'surge_retrace_min': 0.05,       # 从日内高点最小回落比例（5%）
     'surge_vr_max': 1.5,             # 暴涨模式：5分钟+1小时双重缩量（vr5 AND vr1 同时 < 此值）
     'surge_bb_dev': 1.0,             # 暴涨模式：布林偏离度（%）
-    'surge_adx_max': 70,             # 暴涨模式ADX上限（趋势过强不做空，ADX>70=强趋势）
+    'surge_adx_max': 60,             # 暴涨模式ADX上限（ADX>60=强趋势，逆势容易被爆）
 }
 
 def check_short_signal(price, c5, c1, change24h,
