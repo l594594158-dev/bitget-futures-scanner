@@ -815,6 +815,8 @@ def monitor_loop():
 
             # 🚨 每次心跳检查持仓杠杆，发现偏差立即修正（防止set_leverage历史失效）
             verify_and_fix_leverage(symbol)
+            # 同步本地记录的实际杠杆值
+            pos['leverage'] = LEVERAGE
 
             ds = 1 if pos['direction'] == 'long' else -1
             ep = pos['entry_price']
@@ -964,6 +966,10 @@ def monitor_loop():
                 cooldown[symbol] = now; save_cooldown(cooldown)
                 # 🚨 每次心跳都校验一次杠杆（防止set_leverage失效导致实际20x）
                 verify_and_fix_leverage(symbol)
+                # 同步本地记录的实际杠杆值
+                for p in positions['positions']:
+                    if p['symbol'] == symbol:
+                        p['leverage'] = LEVERAGE
                 # 同步更新本地持仓记录
                 positions.setdefault('positions', [])
                 existing_local = [p for p in positions['positions'] if p['symbol'] == symbol]
