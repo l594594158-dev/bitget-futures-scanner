@@ -605,13 +605,14 @@ def analyze_symbol(symbol):
     )
     reasons.append(short_reason)
 
-    direction = None
+    # 双向持仓：只要有任意方向信号，就同时开多空两个方向
+    # long_ok → 做多信号；short_ok → 做空信号；二者独立判断
     trigger_score = 0
-    if long_ok: direction = 'long'; trigger_score = 10
-    elif short_ok: direction = 'short'; trigger_score = 10
+    if long_ok: trigger_score = 10
+    if short_ok: trigger_score = max(trigger_score, 10)
 
     reason_str = f"[{symbol}] " + " | ".join(reasons)
-    return direction, reason_str, trigger_score
+    return 'dual', reason_str, trigger_score  # 返回 'dual' 表示双向开仓
 
 
 # ==================== 交易执行 ====================
@@ -944,7 +945,7 @@ def monitor_loop():
             if now - last_open < COOLDOWN_SECONDS: continue
 
             direction, reason, score = analyze_symbol(symbol)
-            if not direction: continue
+            if score <= 0: continue  # 无信号则跳过
 
             # 已有持仓 -> 移动止盈
             existing = [p for p in positions.get('positions', []) if p['symbol'] == symbol]
@@ -969,7 +970,7 @@ def monitor_loop():
 
                     # ===== 固定止损（与移动止盈并存）=====
                     if pv <= -FIXED_STOP_PCT:
-                        logger.warning(f"🛑 固定止损平仓: {symbol} 亏损{pv*100:.2f}% 平仓价${cp}")
+                        logger.warning(f"🛑 固定止损平仓: {symbol} {pos['direction']} 亏损{pv*100:.2f}% 平仓价${cp}")
                         cr = close_position(symbol, pos['direction'], pos['size'])
                         if cr:
                             pnl = (cp - ep) * float(pos['size']) * ds
@@ -980,8 +981,8 @@ def monitor_loop():
                                 f"止损线: -{FIXED_STOP_PCT*100:.1f}% 实际亏损: {pv*100:.2f}%\n━━━━━━━━━━━━━━━━\n"
                                 f"⏰ {datetime.now().strftime('%Y-%m-%d %H:%M:%S')}"
                             )
-                            positions['positions'] = [p for p in positions['positions'] if p['symbol'] != symbol]
-                            save_positions(positions); continue
+                            positions['positions'] = [p for p in positions['positions'] if p is not pos]
+                            save_positions(positions); continue  # 只移除触发止损的那条记录，另一方向保留
 
                     # 更新峰值
                     if ds == 1 and cp > peak: peak = cp
@@ -1009,7 +1010,7 @@ def monitor_loop():
                                     f"峰值: ${peak} 触发: ${ta}\n━━━━━━━━━━━━━━━━\n"
                                     f"⏰ {datetime.now().strftime('%Y-%m-%d %H:%M:%S')}"
                                 )
-                                positions['positions'] = [p for p in positions['positions'] if p['symbol'] != symbol]
+                                positions['positions'] = [p for p in positions['positions'] if p is not pos]  # 只移除触发止盈的那条，另一方向保留
                                 save_positions(positions); continue
                 save_positions(positions); continue
 
@@ -1017,11 +1018,13 @@ def monitor_loop():
             cp = get_current_price(symbol)
             if cp == 0: continue
 
-            # 🔧 防重复开仓：检查交易所真实持仓
+            # 🔧 防重复开仓：检查交易所真实持仓 + 本地已有记录
+            # 注意：双向持仓时多空数量可能相等 → get_position_size返回0但实际有仓
             real_size = get_position_size(symbol)
-            if real_size > 0:
-                # 已有真实持仓，只更新冷却时间，不开新仓
-                logger.info(f"⚠️ {symbol} 已有持仓{real_size}，跳过开仓")
+            has_local_record = any(p['symbol'] == symbol for p in positions['positions'])
+            if real_size > 0 or has_local_record:
+                # 已有持仓（同向或双向），只更新冷却时间，不开新仓
+                logger.info(f"⚠️ {symbol} 已有持仓(real={real_size} local={has_local_record})，跳过开仓")
                 cooldown[symbol] = now; save_cooldown(cooldown)
                 # 🚨 每次心跳都校验一次杠杆（防止set_leverage失效导致实际20x）
                 verify_and_fix_leverage(symbol)
@@ -1078,95 +1081,58 @@ def monitor_loop():
                         )
                 save_positions(positions); continue
 
+            # 双向持仓：同时开多单和空单
             sz = f"{POSITION_SIZE/cp*LEVERAGE:.4f}"
-            side = 'buy' if direction == 'long' else 'sell'
-            result = place_order(symbol, side, sz)
-            if not result: continue
+
+            # 先开多单
+            result_long = place_order(symbol, 'buy', sz)
+            time.sleep(0.3)
+            # 再开空单
+            result_short = place_order(symbol, 'sell', sz)
+            if not result_long and not result_short: continue  # 两边都失败才跳过
 
             cooldown[symbol] = now; save_cooldown(cooldown)
             ep = cp
 
             # 🚨 成交校验：确认实际保证金与预期相符
             time.sleep(1)  # 等待成交完成
-            pos_verify = api_request('GET', '/api/v2/mix/position/single-position',
+            # 从 Bitget 查询实际持仓（多空各查一次）
+            pos_data = api_request('GET', '/api/v2/mix/position/single-position',
                 params={'symbol': symbol, 'productType': 'USDT-FUTURES', 'marginCoin': 'USDT'})
-            if pos_verify and len(pos_verify) > 0:
-                actual_margin = float(pos_verify[0].get('marginSize', 0))
-                actual_size = float(pos_verify[0].get('total', 0))
-                if actual_margin < POSITION_SIZE * 0.5:
-                    alert_to_queue(f"⚠️ {symbol} 成交异常",
-                        f"代币: {symbol}\n"
-                        f"预期保证金: {POSITION_SIZE} USDT\n"
-                        f"实际保证金: {actual_margin:.4f} USDT ⚠️\n"
-                        f"实际数量: {actual_size}\n"
-                        f"可能原因: Bitget最小成交限制\n"
-                        f"请手动检查是否需要补开\n"
-                        f"⏰ {datetime.now().strftime('%Y-%m-%d %H:%M:%S')}"
-                    )
-                    logger.warning(f"⚠️ {symbol} 成交异常: 预期{POSITION_SIZE}U 实际{actual_margin:.4f}U")
+            if not pos_data or len(pos_data) == 0:
+                continue
 
-            # 获取开仓时指标快照
-            ic5 = api_request('GET', '/api/v2/mix/market/candles',
-                {'symbol': symbol, 'productType': 'USDT-FUTURES', 'granularity': '5m', 'limit': '100'})
-            ic1 = api_request('GET', '/api/v2/mix/market/candles',
-                {'symbol': symbol, 'productType': 'USDT-FUTURES', 'granularity': '1H', 'limit': '100'})
-            ic5 = ic5 or []; ic1 = ic1 or []
-            icl5 = [float(c[4]) for c in ic5]; ich5 = [float(c[2]) for c in ic5]; icl5c = [float(c[3]) for c in ic5]
-            icv5 = [float(c[5]) for c in ic5]
-            icl1 = [float(c[4]) for c in ic1] if ic1 else icl5
-            ich1 = [float(c[2]) for c in ic1] if ic1 else ich5; icl1c = [float(c[3]) for c in ic1] if ic1 else icl5c
-            ir5 = compute_rsi(icl5); ir1 = compute_rsi(icl1)
-            im5, is5, ih5 = compute_macd(icl5); ib5, ibm5, _ = compute_bollinger(icl5)
-            ia1, idi1, idm1 = compute_adx(ich1, icl1c, icl1); iv5 = compute_vol_ratio(icv5)
-            ibw5 = compute_bb_width(icl5)
-            ibear, btype = compute_rsi_divergence(icl5)
-            imslow, imdeg = compute_momentum_slowdown(icl5, icv5)
-            ip5 = (icl5[-1]-icl5[-5])/icl5[-5] if len(icl5)>=5 else 0
+            open_time = datetime.now().strftime('%Y-%m-%d %H:%M:%S')
+            logger.warning(f"🚨 双向开仓: {symbol} @${ep} 多+空各{LEVERAGE}x")
 
-            dt = '🟢做多' if direction=='long' else '🔴做空'
-            alert_to_queue(f"📈 {dt} 开仓: {symbol}",
-                f"{'🟢 做多' if direction=='long' else '🔴 做空'} +{contract.get('change24h',0)*100:.1f}%\n"
-                f"━━━━━━━━━━━━━━━━\n"
-                f"代币: {symbol}\n日涨幅: +{contract.get('change24h',0)*100:.1f}%\n"
-                f"开仓价: ${ep}\n数量: {sz}\n保证金: {actual_margin:.4f} USDT\n杠杆: {LEVERAGE}x\n"
-                f"━━━━━━━━━━━━━━━━\n"
-                f"📊 开仓时指标:\n"
-                f"RSI(5m): {ir5:.1f} | RSI(1H): {ir1:.1f}\n"
-                f"MACD hist: {ih5:.5f}\n"
-                f"布林带宽: {ibw5:.4f}\n"
-                f"vol_ratio: {iv5:.2f}x | 5K涨跌: {ip5*100:+.2f}%\n"
-                f"ADX: {ia1:.1f}  DI+: {idi1:.1f}  DI-: {idm1:.1f}\n"
-                f"RSI负背离: {'是' if ibear and btype=='bearish' else '否'}\n"
-                f"动量衰竭: {'是' if imslow else '否'} ({imdeg:.2f})\n"
-                f"━━━━━━━━━━━━━━━━\n"
-                f"📊 信号: {reason}\n"
-                f"━━━━━━━━━━━━━━━━\n"
-                f"⏰ {datetime.now().strftime('%Y-%m-%d %H:%M:%S')}"
-            )
-            logger.warning(f"🚨 {dt} 开仓: {symbol} @${ep}")
+            for pd in pos_data:
+                hold_side = pd.get('holdSide', '')
+                if hold_side not in ('long', 'short'):
+                    continue
+                actual_margin = float(pd.get('marginSize', POSITION_SIZE))
+                actual_size = float(pd.get('total', 0))
+                actual_ep = float(pd.get('openPriceAvg', ep))
+                if actual_size <= 0:
+                    continue
 
-            # 从 Bitget 持仓接口获取真实保证金（开仓后查询）
-            actual_margin = POSITION_SIZE
-            if result:
-                try:
-                    pos_data = api_request('GET', '/api/v2/mix/position/single-position',
-                        params={'symbol': symbol, 'productType': 'USDT-FUTURES', 'marginCoin': 'USDT'})
-                    if pos_data and len(pos_data) > 0:
-                        actual_margin = float(pos_data[0].get('marginSize', POSITION_SIZE))
-                except: pass
-
-            pos = {
-                'symbol': symbol, 'direction': direction, 'side': side,
-                'entry_price': ep, 'size': sz, 'peak_price': ep,
-                'open_time': datetime.now().strftime('%Y-%m-%d %H:%M:%S'),
-                'trail_triggered': False, 'trail_activated_price': None,
-                'leverage': LEVERAGE, 'margin': actual_margin,
-
-                'entry_reason': reason[:200],
-                'change24h': contract.get('change24h', 0),
-                'order_id': result.get('orderId', '') if result else ''
-            }
-            positions.setdefault('positions', []).append(pos); save_positions(positions)
+                pos = {
+                    'symbol': symbol,
+                    'direction': hold_side,
+                    'side': 'buy' if hold_side == 'long' else 'sell',
+                    'entry_price': actual_ep,
+                    'size': actual_size,
+                    'peak_price': actual_ep,
+                    'open_time': open_time,
+                    'trail_triggered': False,
+                    'trail_activated_price': None,
+                    'leverage': LEVERAGE,
+                    'margin': actual_margin,
+                    'entry_reason': reason[:200],
+                    'change24h': contract.get('change24h', 0),
+                    'order_id': pd.get('orderId', '')
+                }
+                positions.setdefault('positions', []).append(pos)
+            save_positions(positions)
             all_pos = _load_all_pos_symbols(); all_pos.add(symbol); _save_all_pos_symbols(all_pos)
 
         time.sleep(MONITOR_INTERVAL)
