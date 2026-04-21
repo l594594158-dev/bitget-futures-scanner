@@ -1049,7 +1049,7 @@ def monitor_loop():
                 f"{'🟢 做多' if direction=='long' else '🔴 做空'} +{contract.get('change24h',0)*100:.1f}%\n"
                 f"━━━━━━━━━━━━━━━━\n"
                 f"代币: {symbol}\n日涨幅: +{contract.get('change24h',0)*100:.1f}%\n"
-                f"开仓价: ${ep}\n数量: {sz}\n保证金: {POSITION_SIZE} USDT\n杠杆: {LEVERAGE}x\n"
+                f"开仓价: ${ep}\n数量: {sz}\n保证金: {actual_margin:.4f} USDT\n杠杆: {LEVERAGE}x\n"
                 f"━━━━━━━━━━━━━━━━\n"
                 f"📊 开仓时指标:\n"
                 f"RSI(5m): {ir5:.1f} | RSI(1H): {ir1:.1f}\n"
@@ -1066,16 +1066,26 @@ def monitor_loop():
             )
             logger.warning(f"🚨 {dt} 开仓: {symbol} @${ep}")
 
+            # 从 Bitget 持仓接口获取真实保证金（开仓后查询）
+            actual_margin = POSITION_SIZE
+            if result:
+                try:
+                    pos_data = api_request('GET', '/api/v2/mix/position/single-position',
+                        params={'symbol': symbol, 'productType': 'USDT-FUTURES', 'marginCoin': 'USDT'})
+                    if pos_data and len(pos_data) > 0:
+                        actual_margin = float(pos_data[0].get('marginSize', POSITION_SIZE))
+                except: pass
+
             pos = {
                 'symbol': symbol, 'direction': direction, 'side': side,
                 'entry_price': ep, 'size': sz, 'peak_price': ep,
                 'open_time': datetime.now().strftime('%Y-%m-%d %H:%M:%S'),
                 'trail_triggered': False, 'trail_activated_price': None,
-                'leverage': LEVERAGE, 'margin': adj_position_size,
+                'leverage': LEVERAGE, 'margin': actual_margin,
 
                 'entry_reason': reason[:200],
                 'change24h': contract.get('change24h', 0),
-                'order_id': result.get('orderId', '')
+                'order_id': result.get('orderId', '') if result else ''
             }
             positions.setdefault('positions', []).append(pos); save_positions(positions)
 
