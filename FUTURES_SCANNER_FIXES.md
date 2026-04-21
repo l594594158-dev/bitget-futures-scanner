@@ -234,3 +234,29 @@ f"{value:.5f}"  # 移除条件，简化
 
 ### 验证
 - 重启后正常运行，无报错
+
+---
+
+## 2026-04-21｜Bug：重启后DB1外持仓恢复遗漏
+
+### 问题
+- 机器人重启后只检查 DB1 热点池里的币的持仓
+- CETUSUSDT/SUPERUSDT/LABUSDT 不在 DB1 里 → 完全跳过持仓恢复
+- db_positions.json 只记录了9个，Bitget 实际有13个，差4个
+
+### 根因
+- scan_hot_contracts 和 monitor_loop 都只遍历 contracts_sorted（DB1）
+- 没有一个跨重启持久化的"历史持仓币种"列表
+
+### 修复
+1. 新增 `db_all_pos_symbols.json`：记录所有曾经开过仓的币种（跨重启持久化）
+2. 每次开仓成功后自动追加币种到列表
+3. 每次重启恢复时：DB1币种 + 历史币种列表 **两个来源都查**
+4. 对比 Bitget 真实持仓，漏掉的补进 db_positions
+
+### 新增文件
+- `db_all_pos_pos_symbols.json`：持久化历史持仓币种列表
+
+### 验证
+- 重启后启动日志显示：SUPERUSDT/LABUSDT/CETUSUSDT 全部被补入
+- Bitget 13个持仓 vs 本地13个，完全同步

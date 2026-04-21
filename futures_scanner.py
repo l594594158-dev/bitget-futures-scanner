@@ -181,6 +181,16 @@ def save_cooldown(data):
     with open(COOLDOWN_FILE, 'w') as f: json.dump(data, f)
 
 # ==================== 扫描 ====================
+ALL_POS_FILE = f'{WORKSPACE}/db_all_pos_symbols.json'
+
+def _load_all_pos_symbols():
+    if os.path.exists(ALL_POS_FILE):
+        with open(ALL_POS_FILE) as f: return set(json.load(f))
+    return set()
+
+def _save_all_pos_symbols(symbols):
+    with open(ALL_POS_FILE, 'w') as f: json.dump(list(symbols), f)
+
 def scan_hot_contracts():
     """
     扫描入库逻辑：
@@ -801,8 +811,47 @@ def monitor_loop():
     positions = load_positions()
     cooldown = load_cooldown()
 
+    # 🚨 启动时全量恢复：从Bitget查询持仓，对比本地记录，漏掉的补进db_positions
+    # all_pos_symbols 记录所有曾经开过仓的币种（跨重启持久化），解决DB1外持仓的恢复问题
+    all_pos_symbols = _load_all_pos_symbols()
+
+    # 从Bitget恢复：当前DB1 + 历史持仓币种都要查
+    db = load_db()
+    contracts = db.get('contracts', [])
+    db_symbols = {c['symbol'] for c in contracts}
+    recovery_syms = db_symbols | all_pos_symbols
+    for sym in recovery_syms:
+        real_size = get_position_size(sym)
+        if real_size > 0:
+            existing = [p for p in positions['positions'] if p['symbol'] == sym]
+            if not existing:
+                pos_data = api_request('GET', '/api/v2/mix/position/single-position',
+                    {'symbol': sym, 'productType': 'USDT-FUTURES', 'marginCoin': 'USDT'})
+                if pos_data and len(pos_data) > 0:
+                    p = pos_data[0]
+                    cp = get_current_price(sym)
+                    pos = {
+                        'symbol': sym, 'direction': 'long' if p.get('holdSide') == 'long' else 'short',
+                        'side': 'buy' if p.get('holdSide') == 'long' else 'sell',
+                        'entry_price': float(p.get('openPriceAvg', 0)),
+                        'size': float(p.get('total', 0)),
+                        'peak_price': cp or float(p.get('openPriceAvg', 0)),
+                        'open_time': datetime.fromtimestamp(int(p.get('cTime', 0))/1000).strftime('%Y-%m-%d %H:%M:%S'),
+                        'trail_triggered': False, 'trail_activated_price': None,
+                        'leverage': int(p.get('leverage', LEVERAGE)),
+                        'margin': float(p.get('marginSize', 0)),
+                        'unrealized_pl': float(p.get('unrealizedPL', 0)),
+                        'liquidation_price': float(p.get('liquidationPrice', 0)),
+                        'order_id': ''
+                    }
+                    positions['positions'].append(pos)
+                    logger.info(f"✅ 启动补入漏掉持仓: {sym} {p.get('holdSide')} size={p.get('total')} leverage={p.get('leverage')}x")
+                    verify_and_fix_leverage(sym)
+                    all_pos_symbols.add(sym)
+    save_positions(positions)
+    _save_all_pos_symbols(all_pos_symbols)
+
     while True:
-        db = load_db()
         contracts = db.get('contracts', [])
         if not contracts:
             time.sleep(MONITOR_INTERVAL); continue
@@ -1006,6 +1055,7 @@ def monitor_loop():
                             'order_id': ''
                         }
                         positions['positions'].append(pos); save_positions(positions)
+                        all_pos = _load_all_pos_symbols(); all_pos.add(symbol); _save_all_pos_symbols(all_pos)
                         logger.info(f"✅ 已从交易所恢复持仓记录: {symbol}")
                         # 🚨 从交易所恢复后立即校验杠杆（防止历史仓位带了错杠杆）
                         verify_and_fix_leverage(symbol)
@@ -1117,6 +1167,7 @@ def monitor_loop():
                 'order_id': result.get('orderId', '') if result else ''
             }
             positions.setdefault('positions', []).append(pos); save_positions(positions)
+            all_pos = _load_all_pos_symbols(); all_pos.add(symbol); _save_all_pos_symbols(all_pos)
 
         time.sleep(MONITOR_INTERVAL)
 
