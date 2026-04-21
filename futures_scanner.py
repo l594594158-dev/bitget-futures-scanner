@@ -371,12 +371,37 @@ def compute_momentum_slowdown(closes, vols, period=10):
         return True, min(slowdown_ratio, 1.0)
     return False, 0.0
 
+def compute_consecutive_rise(cl1, hi1, lo1, hours=4):
+    """
+    检测是否连续N小时上涨（每根1H K线收阳线）。
+    用于做空前置条件：涨得太久=回调风险积累。
+    cl1: 每根K线的收盘价列表
+    hi1: 每根K线的最高价列表
+    lo1: 每根K线的最低价列表
+    Bitget 1H K线格式: [timestamp, open, high, low, close, volume]
+    返回: (是否连续上涨, 连续上涨小时数)
+    """
+    if cl1 is None or len(cl1) < hours + 1:
+        return False, 0
+    # 每根K线的开盘价 = 前一根K线的收盘价（复盘）
+    consecutive = 0
+    for i in range(1, hours + 1):
+        # 当前K线：开盘=cl1[-i-1]，收盘=cl1[-i]
+        open_h = cl1[-(i + 1)]
+        close_h = cl1[-i]
+        if close_h > open_h:
+            consecutive += 1
+        else:
+            break
+    return consecutive >= hours, consecutive
+
 
 # ==================== 信号分析 v4 ====================
 # ==================== 做空信号配置（可单独调整）====================
 SHORT_CONFIG = {
     # ── 主模式：RSI负背离型 ──
     'require_rsi_div': True,          # 是否要求RSI负背离（True=必须，False=跳过）
+    'require_consecutive_rise': True,  # 是否要求连续4小时上涨（做空前置条件）
     'adx_min': 20,                    # ADX最小值（趋势需明显）
     'adx_max': 75,                    # ADX>此值则禁止做空（强趋势易延续，75≈ADX极强）
     'di_minus_stronger': True,        # DI-必须大于DI+（空头主导）
@@ -402,6 +427,7 @@ def check_short_signal(price, c5, c1, change24h,
                        adx1, dip1, dim1,
                        bb_up5, bb_mid5, bb_lo5, bb_dev,
                        vr5, vr1, mom_slowdown, slowdown_deg,
+                       has_consecutive_rise, consecutive_rise_hours,
                        extra_short):
     """
     独立的做空信号判断函数（可独立于analyze_symbol调用和测试）
@@ -445,14 +471,17 @@ def check_short_signal(price, c5, c1, change24h,
         c2 = adx1 and cfg['adx_min'] <= adx1 <= cfg['adx_max'] and (
             dim1 > dip1 if cfg['di_minus_stronger'] else True)
         c3 = bb_dev >= cfg['bb_dev_threshold']
+        # 条件④：连续4小时上涨（涨太久=回调风险积累，做空前置条件）
+        c4_rise = has_consecutive_rise if cfg.get('require_consecutive_rise', True) else True
         extra_ok = len(extra_short) >= cfg['extra_require']
 
-        short_ok = c1 and c2 and c3 and extra_ok
+        short_ok = c1 and c2 and c3 and c4_rise and extra_ok
         reasons.append(
             f"做空[主模式📉]: ①RSI负背离={'✅' if c1 else '❌'} "
             f"②ADX={adx1:.1f}∈[{cfg['adx_min']},{cfg['adx_max']}]={'✅' if c2 else '❌'} "
             f"③布林偏离={bb_dev:.1f}%>={cfg['bb_dev_threshold']}%={'✅' if c3 else '❌'} "
-            f"④附加={'✅' if extra_ok else '❌'}{extra_short}"
+            f"④连续4h上涨={'✅' if c4_rise else '❌'}({consecutive_rise_hours}h) "
+            f"⑤附加={'✅' if extra_ok else '❌'}{extra_short}"
         )
 
     return short_ok, " | ".join(reasons)
@@ -512,6 +541,8 @@ def analyze_symbol(symbol):
     has_bull_div, bull_div_type = compute_rsi_divergence(cl5)
     # 动量衰竭
     mom_slowdown, slowdown_deg = compute_momentum_slowdown(cl5, vo5)
+    # 连续上涨检测（做空前置条件）
+    has_consecutive_rise, consecutive_rise_hours = compute_consecutive_rise(cl1, hi1, lo1, hours=4)
 
     # ===================== 信号判断核心逻辑 =====================
     # 【改进】量价分析作为第一优先级，极端行情币种更依赖量能确认方向
@@ -566,6 +597,7 @@ def analyze_symbol(symbol):
         adx1, dip1, dim1,
         bb_up5, bb_mid5, bb_lo5, bb_dev,
         vr5, vr1, mom_slowdown, slowdown_deg,
+        has_consecutive_rise, consecutive_rise_hours,
         extra_short
     )
     reasons.append(short_reason)
