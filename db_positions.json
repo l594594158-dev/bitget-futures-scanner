@@ -17,22 +17,6 @@
       "order_id": ""
     },
     {
-      "symbol": "PRLUSDT",
-      "direction": "long",
-      "side": "buy",
-      "entry_price": 0.2131,
-      "size": 94.0,
-      "peak_price": 0.228,
-      "open_time": "2026-04-21 02:32:32",
-      "trail_triggered": false,
-      "trail_activated_price": null,
-      "leverage": 20,
-      "margin": 1.00157,
-      "unrealized_pl": 0.0846,
-      "liquidation_price": 0.207763752053,
-      "order_id": ""
-    },
-    {
       "symbol": "GUNUSDT",
       "direction": "long",
       "side": "buy",
@@ -54,7 +38,7 @@
       "side": "buy",
       "entry_price": 7.799,
       "size": 2.0,
-      "peak_price": 7.916,
+      "peak_price": 7.952,
       "open_time": "2026-04-21 04:50:18",
       "trail_triggered": false,
       "trail_activated_price": null,
@@ -65,28 +49,12 @@
       "order_id": ""
     },
     {
-      "symbol": "NAORISUSDT",
-      "direction": "long",
-      "side": "buy",
-      "entry_price": 0.06394,
-      "size": 312.0,
-      "peak_price": 0.06855,
-      "open_time": "2026-04-21 06:36:44",
-      "trail_triggered": false,
-      "trail_activated_price": null,
-      "leverage": 10,
-      "margin": 1.994928,
-      "unrealized_pl": 0.078,
-      "liquidation_price": 0.059057881774,
-      "order_id": ""
-    },
-    {
       "symbol": "RAVEUSDT",
       "direction": "long",
       "side": "buy",
       "entry_price": 0.999907,
       "size": 20.0,
-      "peak_price": 1.05198,
+      "peak_price": 1.07786,
       "open_time": "2026-04-21 09:25:12",
       "trail_triggered": false,
       "trail_activated_price": null,
@@ -95,7 +63,55 @@
       "unrealized_pl": 0.07766,
       "liquidation_price": 0.923157840723,
       "order_id": ""
+    },
+    {
+      "symbol": "ORDIUSDT",
+      "direction": "short",
+      "side": "sell",
+      "entry_price": 4.942,
+      "size": 4.04,
+      "peak_price": 4.818,
+      "open_time": "2026-04-21 09:41:09",
+      "trail_triggered": false,
+      "trail_activated_price": null,
+      "leverage": 10,
+      "margin": 1.996568,
+      "unrealized_pl": -0.04848,
+      "liquidation_price": 5.397339158061,
+      "order_id": ""
+    },
+    {
+      "symbol": "BASUSDT",
+      "direction": "long",
+      "side": "buy",
+      "entry_price": 0.010217,
+      "size": 1959.0,
+      "peak_price": 0.010458,
+      "open_time": "2026-04-21 09:40:13",
+      "trail_triggered": false,
+      "trail_activated_price": null,
+      "leverage": 10,
+      "margin": 2.0015103,
+      "unrealized_pl": 0.423144,
+      "liquidation_price": 0.009685380241,
+      "order_id": ""
+    },
+    {
+      "symbol": "BASEDUSDT",
+      "direction": "short",
+      "side": "sell",
+      "entry_price": 0.1222,
+      "size": 163.0,
+      "peak_price": 0.1206,
+      "open_time": "2026-04-21 09:50:23",
+      "trail_triggered": false,
+      "trail_activated_price": null,
+      "leverage": 10,
+      "margin": 1.99186,
+      "unrealized_pl": -0.0326,
+      "liquidation_price": 0.133010093014,
+      "order_id": ""
     }
   ],
-  "last_updated": "2026-04-21 09:40:45"
+  "last_updated": "2026-04-21 10:00:34"
 }

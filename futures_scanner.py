@@ -389,10 +389,10 @@ SHORT_CONFIG = {
 
     # ── 暴涨快捷模式（日涨幅>阈值时启用，跳过RSI负背离）──
     'surge_mode_enabled': True,       # 开启暴涨快捷模式
-    'surge_day_change_thresh': 0.15, # 触发暴涨模式的日涨幅阈值（15%以上）
+    'surge_day_change_thresh': 0.25, # 触发暴涨模式的日涨幅阈值（25%以上）
     'surge_adx_min': 25,              # 暴涨模式ADX最小值（放宽）
     'surge_retrace_min': 0.05,       # 从日内高点最小回落比例（5%）
-    'surge_vr_max': 1.5,             # 暴涨模式：缩量（vr < 此值）
+    'surge_vr_max': 1.5,             # 暴涨模式：5分钟+1小时双重缩量（vr5 AND vr1 同时 < 此值）
     'surge_bb_dev': 1.0,             # 暴涨模式：布林偏离度（%）
     'surge_adx_max': 85,             # 暴涨模式ADX上限（极端行情另论）
 }
@@ -401,7 +401,7 @@ def check_short_signal(price, c5, c1, change24h,
                        has_bear_div, bear_div_type,
                        adx1, dip1, dim1,
                        bb_up5, bb_mid5, bb_lo5, bb_dev,
-                       vr5, mom_slowdown, slowdown_deg,
+                       vr5, vr1, mom_slowdown, slowdown_deg,
                        extra_short):
     """
     独立的做空信号判断函数（可独立于analyze_symbol调用和测试）
@@ -423,8 +423,9 @@ def check_short_signal(price, c5, c1, change24h,
         peak_today = max(hi5[-60:]) if len(hi5) >= 12 else max(hi5[-len(hi5):])  # 最近12根5m≈1小时
         retrace_pct = (peak_today - price) / peak_today if peak_today > 0 else 0
         c2_surge = retrace_pct >= cfg['surge_retrace_min']
-        # 条件③：缩量或布林偏离
-        c3_surge = vr5 < cfg['surge_vr_max'] or bb_dev >= cfg['surge_bb_dev']
+        # 条件③：5分钟 AND 1小时双重缩量，或布林偏离（二者满足其一）
+        # 双重保险：5分钟vr5 + 1小时vr1 同时缩量 → 做空胜率更高
+        c3_surge = (vr5 < cfg['surge_vr_max'] and vr1 < cfg['surge_vr_max']) or bb_dev >= cfg['surge_bb_dev']
         # 附加条件
         extra_ok = len(extra_short) >= cfg['extra_require']
 
@@ -432,7 +433,7 @@ def check_short_signal(price, c5, c1, change24h,
         reasons.append(
             f"做空[暴涨🚀]: ①ADX={adx1:.1f}∈[{cfg['surge_adx_min']},{cfg['surge_adx_max']}]={'✅' if c1_surge else '❌'} "
             f"②回落{retrace_pct*100:.1f}%>={cfg['surge_retrace_min']*100:.0f}%={'✅' if c2_surge else '❌'} "
-            f"③布林偏离={bb_dev:.1f}%/vr={vr5:.2f}={'✅' if c3_surge else '❌'} "
+            f"③布林偏离={bb_dev:.1f}%/vr5={vr5:.2f}&vr1={vr1:.2f}={'✅' if c3_surge else '❌'} "
             f"④附加={'✅' if extra_ok else '❌'}{extra_short}"
         )
     else:
@@ -485,6 +486,7 @@ def analyze_symbol(symbol):
     cl1 = [float(c[4]) for c in c1] if c1 else cl5
     hi1 = [float(c[2]) for c in c1] if c1 else hi5
     lo1 = [float(c[3]) for c in c1] if c1 else lo5
+    vo1 = [float(c[5]) for c in c1] if c1 else vo5
 
     price = cl5[-1]
     # 获取真实24h涨幅（用于暴涨快捷模式判断）
@@ -502,6 +504,7 @@ def analyze_symbol(symbol):
     bb_up5, bb_mid5, bb_lo5 = compute_bollinger(cl5)
     adx1, dip1, dim1 = compute_adx(hi1, lo1, cl1)
     vr5 = compute_vol_ratio(vo5)
+    vr1 = compute_vol_ratio(vo1)  # 1小时交易量比率（用于暴涨快捷模式）
     bb_dev = abs(price-bb_mid5)/bb_mid5*100 if bb_mid5 else 999
 
     # RSI背离
@@ -535,8 +538,8 @@ def analyze_symbol(symbol):
         cond3_long = bb_dev > 2.0 or (bb_lo5 and price <= bb_lo5 * 1.02)
     # ④ 附加：量价背离(缩量上涨→可能回调) 或 RSI超卖 或 放量确认
     extra_long = []
-    if vr_weak: extra_long.append(f"缩量反弹(vol={vr5:.2f}x)")
-    if vr_strong: extra_long.append(f"放量确认(vol={vr5:.2f}x)")
+    if vr_weak: extra_long.append(f"缩量反弹(vol1h={vr1:.2f}x)")
+    if vr_strong: extra_long.append(f"放量确认(vol1h={vr1:.2f}x)")
     if rsi5 < 40: extra_long.append(f"RSI超卖({rsi5:.1f}<40)")
     cond4_long = len(extra_long) >= 1 and cond1_long and cond2_long
 
@@ -551,8 +554,8 @@ def analyze_symbol(symbol):
     # ===================== 做空条件 =====================
     # 附加条件（做空和做多共用的量能判断）
     extra_short = []
-    if vr_weak: extra_short.append(f"缩量滞涨(vol={vr5:.2f}x)")
-    if vr_strong: extra_short.append(f"放量确认(vol={vr5:.2f}x)")
+    if vr_weak: extra_short.append(f"缩量滞涨(vr5={vr5:.2f},vr1={vr1:.2f})")
+    if vr_strong: extra_short.append(f"放量确认(vr5={vr5:.2f},vr1={vr1:.2f})")
     if mom_slowdown and slowdown_deg > SHORT_CONFIG.get('momentum_slowdown_min', 0.5):
         extra_short.append(f"动量衰竭({slowdown_deg:.1f})")
 
@@ -562,7 +565,7 @@ def analyze_symbol(symbol):
         has_bear_div, bear_div_type,
         adx1, dip1, dim1,
         bb_up5, bb_mid5, bb_lo5, bb_dev,
-        vr5, mom_slowdown, slowdown_deg,
+        vr5, vr1, mom_slowdown, slowdown_deg,
         extra_short
     )
     reasons.append(short_reason)
