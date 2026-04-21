@@ -1026,6 +1026,25 @@ def monitor_loop():
             cooldown[symbol] = now; save_cooldown(cooldown)
             ep = cp
 
+            # 🚨 成交校验：确认实际保证金与预期相符
+            time.sleep(1)  # 等待成交完成
+            pos_verify = api_request('GET', '/api/v2/mix/position/single-position',
+                params={'symbol': symbol, 'productType': 'USDT-FUTURES', 'marginCoin': 'USDT'})
+            if pos_verify and len(pos_verify) > 0:
+                actual_margin = float(pos_verify[0].get('marginSize', 0))
+                actual_size = float(pos_verify[0].get('total', 0))
+                if actual_margin < POSITION_SIZE * 0.5:
+                    alert_to_queue(f"⚠️ {symbol} 成交异常",
+                        f"代币: {symbol}\n"
+                        f"预期保证金: {POSITION_SIZE} USDT\n"
+                        f"实际保证金: {actual_margin:.4f} USDT ⚠️\n"
+                        f"实际数量: {actual_size}\n"
+                        f"可能原因: Bitget最小成交限制\n"
+                        f"请手动检查是否需要补开\n"
+                        f"⏰ {datetime.now().strftime('%Y-%m-%d %H:%M:%S')}"
+                    )
+                    logger.warning(f"⚠️ {symbol} 成交异常: 预期{POSITION_SIZE}U 实际{actual_margin:.4f}U")
+
             # 获取开仓时指标快照
             ic5 = api_request('GET', '/api/v2/mix/market/candles',
                 {'symbol': symbol, 'productType': 'USDT-FUTURES', 'granularity': '5m', 'limit': '100'})
