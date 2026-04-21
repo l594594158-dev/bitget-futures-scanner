@@ -63,7 +63,7 @@ LEVERAGE = 10
 MARGIN_MODE = "isolated"
 COOLDOWN_SECONDS = 300
 TRAIL_TRIGGER_PCT = 0.08    # 移动止盈触发：盈利≥8%激活
-TRAIL_EXIT_PCT = 0.04       # 移动止盈退出：从峰值回撤4%
+TRAIL_EXIT_PCT = 0.05       # 移动止盈退出：从峰值回撤5%
 # ==================== P0 修复：止损 + 波动率调仓 ====================
 FIXED_STOP_PCT = 0.09      # 固定止损：亏损9%立即止损（与移动止盈并存）
 VOL_THRESHOLD_PCT = 0.005   # ATR/price > 0.5% 认定为高波动
@@ -419,70 +419,46 @@ def analyze_symbol(symbol):
     # 动量衰竭
     mom_slowdown, slowdown_deg = compute_momentum_slowdown(cl5, vo5)
 
-    # ===================== 信号判断核心逻辑 =====================
-    # 【改进】量价分析作为第一优先级，极端行情币种更依赖量能确认方向
-    # vr > 1.5x: 放量（趋势确认）
-    # vr < 0.5x: 缩量（可能反转）
-    # 0.5x < vr < 1.5x: 中性，需结合ADX判断
-    
-    vr_strong = vr5 > 1.5    # 放量趋势
-    vr_weak = vr5 < 0.5       # 缩量可能反转
-    vr_neutral = 0.5 <= vr5 <= 1.5  # 中性量
-    
     # ===================== 做多条件 =====================
-    # ① RSI正背离（反转信号，需缩量或中性量配合）
+    # ① RSI正背离
     cond1_long = has_bull_div and bull_div_type == 'bullish'
-    # ② 趋势向上：ADX>20 且 DI+>DI-，放量时要求更严格
-    cond2_long = adx1 and adx1 > 20 and dip1 > dim1
-    # ③ 布林下轨附近 + 量能支持
-    #    - 放量时(vr>1.5)：需价格接近下轨且ADX>25
-    #    - 缩量时(vr<0.5)：价格偏离中轨>2%即可（反弹预期）
-    cond3_long = False
-    if vr_strong:
-        cond3_long = bb_lo5 and price <= bb_lo5 and adx1 and adx1 > 25
-    else:  # 缩量或中性
-        cond3_long = bb_dev > 2.0 or (bb_lo5 and price <= bb_lo5 * 1.02)
-    # ④ 附加：量价背离(缩量上涨→可能回调) 或 RSI超卖 或 放量确认
+    # ② MACD柱线>0
+    cond2_long = hist5 is not None and hist5 > 0
+    # ③ 布林中轨支撑(偏离<2%)
+    cond3_long = bb_dev < 2.0
+    # ④ 附加(至少满足1个)
     extra_long = []
-    if vr_weak: extra_long.append(f"缩量反弹(vol={vr5:.2f}x)")
-    if vr_strong: extra_long.append(f"放量确认(vol={vr5:.2f}x)")
-    if rsi5 < 40: extra_long.append(f"RSI超卖({rsi5:.1f}<40)")
-    cond4_long = len(extra_long) >= 1 and cond1_long and cond2_long
+    if adx1 and adx1 > 25 and dip1 > dim1: extra_long.append(f"ADX={adx1:.0f}>25+DI+")
+    if vr5 > 1.2: extra_long.append(f"vol={vr5:.2f}x>1.2")
+    if rsi5 < 50: extra_long.append(f"RSI={rsi5:.1f}<50")
+    cond4_long = len(extra_long) >= 1
 
     long_ok = cond1_long and cond2_long and cond3_long and cond4_long
     reasons.append(
         f"做多: ①RSI正背离={'✅' if cond1_long else '❌'} "
-        f"②ADX>20+DI+={'✅' if cond2_long else '❌'} "
-        f"③布林+量={'✅' if cond3_long else '❌'} "
+        f"②MACD>0={'✅' if cond2_long else '❌'} "
+        f"③布林中轨<2%={'✅' if cond3_long else '❌'} "
         f"④附加={'✅' if cond4_long else '❌'}{extra_long}"
     )
 
     # ===================== 做空条件 =====================
-    # ① RSI负背离（反转信号，需缩量或中性量配合）
+    # ① RSI负背离
     cond1_short = has_bear_div and bear_div_type == 'bearish'
-    # ② 趋势向下：ADX>20 且 DI->DI+，放量时要求更严格
-    cond2_short = adx1 and adx1 > 20 and dim1 > dip1
-    # ③ 布林上轨附近 + 量能支持
-    #    - 放量时(vr>1.5)：需价格接近上轨且ADX>25
-    #    - 缩量时(vr<0.5)：价格偏离中轨>2%即可（回落预期）
-    cond3_short = False
-    if vr_strong:
-        cond3_short = bb_up5 and price >= bb_up5 and adx1 and adx1 > 25
-    else:  # 缩量或中性
-        cond3_short = bb_dev > 2.0 or (bb_up5 and price >= bb_up5 * 0.98)
-    # ④ 附加：量价背离(缩量上涨→可能回调) 或 动量衰竭 或 放量确认
+    # ② 非强趋势(ADX>60+DI+主导时禁止)
+    cond2_short = not (adx1 and adx1 > 60 and dip1 > dim1)
+    # ③ 附加(至少满足1个)
     extra_short = []
-    if vr_weak: extra_short.append(f"缩量滞涨(vol={vr5:.2f}x)")
-    if vr_strong: extra_short.append(f"放量确认(vol={vr5:.2f}x)")
+    if hist5 is not None and hist5 < 0: extra_short.append(f"MACD<0({hist5:.4f})")
+    if pc5 > 0 and vr5 < 0.5: extra_short.append(f"量价背离(vol={vr5:.2f}x)")
+    if bb_up5 and price >= bb_up5: extra_short.append("触及布林上轨")
     if mom_slowdown and slowdown_deg > 0.5: extra_short.append(f"动量衰竭({slowdown_deg:.1f})")
-    cond4_short = len(extra_short) >= 1 and cond1_short and cond2_short
+    cond3_short = len(extra_short) >= 1
 
-    short_ok = cond1_short and cond2_short and cond3_short and cond4_short
+    short_ok = cond1_short and cond2_short and cond3_short
     reasons.append(
         f"做空: ①RSI负背离={'✅' if cond1_short else '❌'} "
-        f"②ADX>20+DI-={'✅' if cond2_short else '❌'} "
-        f"③布林+量={'✅' if cond3_short else '❌'} "
-        f"④附加={'✅' if cond4_short else '❌'}{extra_short}"
+        f"②非ADX>60+DI+={'✅' if cond2_short else '❌'} "
+        f"③附加={'✅' if cond3_short else '❌'}{extra_short}"
     )
 
     direction = None
@@ -577,61 +553,15 @@ def set_leverage(symbol, leverage, hold_side):
         body = {
             'symbol': symbol, 'productType': 'USDT-FUTURES',
             'marginCoin': 'USDT', 'leverage': str(leverage),
-            'marginMode': 'isolated',  # 必须显式指定隔离模式，否则可能默认全仓（crossed）导致20x
             'holdSide': hold_side
         }
         result = api_request('POST', '/api/v2/mix/account/set-leverage', body=body)
         if result:
-            actual_mode = result.get('marginMode', '')
-            actual_leverage = int(result.get('longLeverage', leverage))
-            logger.info(f"杠杆设置: {symbol} {leverage}x (mode={actual_mode})")
-            # 🚨 校验：若返回不是isolated或杠杆不符，记录严重警告
-            if actual_mode != 'isolated':
-                logger.error(f"🚨 杠杆模式异常！{symbol} expected=isolated actual={actual_mode}，将重新设置")
-                # 再次尝试不带holdSide的全仓统一设置
-                retry_body = {
-                    'symbol': symbol, 'productType': 'USDT-FUTURES',
-                    'marginCoin': 'USDT', 'leverage': str(leverage),
-                    'marginMode': 'isolated'
-                }
-                api_request('POST', '/api/v2/mix/account/set-leverage', body=retry_body)
-            if actual_leverage != leverage:
-                logger.error(f"🚨 杠杆数值异常！{symbol} expected={leverage}x actual={actual_leverage}x，将重新设置")
+            logger.info(f"杠杆设置: {symbol} {leverage}x ({result.get('marginMode')})")
         return result
     except Exception as e:
-        logger.error(f"🚨 杠杆设置失败: {e}")
+        logger.warning(f"杠杆设置失败: {e}")
     return None
-
-def verify_and_fix_leverage(symbol):
-    """
-    深度校验仓位实际杠杆，发现与目标不符立即修正。
-    调用时机：监测循环发现持仓时、开仓后恢复持仓记录时。
-    """
-    try:
-        pos_data = api_request('GET', '/api/v2/mix/position/single-position',
-                               params={'symbol': symbol, 'productType': 'USDT-FUTURES', 'marginCoin': 'USDT'})
-        if not pos_data or len(pos_data) == 0:
-            return
-        p = pos_data[0]
-        actual_size = float(p.get('total', 0))
-        if actual_size <= 0:
-            return
-        actual_leverage = int(p.get('leverage', 0))
-        actual_mode = p.get('marginMode', '')
-        if actual_leverage != LEVERAGE or actual_mode != 'isolated':
-            logger.warning(f"🚨 {symbol} 杠杆异常: 实际{actual_leverage}x/{actual_mode}，目标{LEVERAGE}x/isolated → 正在修正")
-            hold_side = p.get('holdSide', 'long')
-            set_leverage(symbol, LEVERAGE, hold_side)
-            alert_to_queue(f"⚠️ {symbol} 杠杆异常已修正",
-                f"代币: {symbol}\n"
-                f"原杠杆: {actual_leverage}x ({actual_mode})\n"
-                f"修正为: {LEVERAGE}x (isolated)\n"
-                f"⏰ {datetime.now().strftime('%Y-%m-%d %H:%M:%S')}"
-            )
-        else:
-            logger.info(f"✅ {symbol} 杠杆校验OK: {actual_leverage}x/isolated")
-    except Exception as e:
-        logger.error(f"杠杆校验失败 {symbol}: {e}")
 
 def place_order(symbol, side, size):
     """
@@ -657,8 +587,7 @@ def place_order(symbol, side, size):
         data = api_request('POST', '/api/v2/mix/order/place-order', body={
             'symbol': symbol, 'productType': 'USDT-FUTURES', 'marginCoin': 'USDT',
             'side': side, 'orderType': 'market', 'size': size,
-            'marginMode': 'isolated', 'tradeSide': 'open'
-            # leverage 已在 set_leverage 中设置，此处不再重复
+            'leverage': str(LEVERAGE), 'marginMode': 'isolated', 'tradeSide': 'open'
         })
         return data
     except Exception as e:
@@ -676,8 +605,7 @@ def close_position(symbol, direction, size):
         data = api_request('POST', '/api/v2/mix/order/place-order', body={
             'symbol': symbol, 'productType': 'USDT-FUTURES', 'marginCoin': 'USDT',
             'side': close_side, 'orderType': 'market', 'size': size,
-            'marginMode': 'isolated', 'tradeSide': 'close'
-            # leverage 已在开仓时 set_leverage 设置，平仓不需要重复传
+            'leverage': str(LEVERAGE), 'marginMode': 'isolated', 'tradeSide': 'close'
         })
         return data
     except Exception as e:
@@ -728,9 +656,6 @@ def monitor_loop():
                 positions['positions'] = [p for p in positions['positions'] if p['symbol'] != symbol]
                 save_positions(positions); continue
 
-            # 🚨 每次心跳检查持仓杠杆，发现偏差立即修正（防止set_leverage历史失效）
-            verify_and_fix_leverage(symbol)
-
             ds = 1 if pos['direction'] == 'long' else -1
             ep = pos['entry_price']
             peak = pos.get('peak_price', ep)
@@ -768,10 +693,7 @@ def monitor_loop():
                     logger.info(f"📍 移动止盈激活: {symbol} 峰值${peak}")
             else:
                 ta = pos.get('trail_activated_price', peak)
-                # 【修复】回撤计算：(激活价 - 当前价) / 激活价
-                # 做空：激活后价格需从低位反弹才触发止盈，peaktrailtrailing激活价是最低点
-                # 回撤 = (peak - cp) / peak，但激活价用于判断触发
-                dd = (peak - cp) / peak if ds == 1 else (peak - cp) / peak
+                dd = (ta - cp)/ta if ds==1 else (cp - ta)/ta
                 if dd >= TRAIL_EXIT_PCT:
                     logger.warning(f"🟥 移动止盈平仓: {symbol} 平仓价${cp}")
                     cr = close_position(symbol, pos['direction'], pos['size'])
@@ -877,8 +799,6 @@ def monitor_loop():
                 # 已有真实持仓，只更新冷却时间，不开新仓
                 logger.info(f"⚠️ {symbol} 已有持仓{real_size}，跳过开仓")
                 cooldown[symbol] = now; save_cooldown(cooldown)
-                # 🚨 每次心跳都校验一次杠杆（防止set_leverage失效导致实际20x）
-                verify_and_fix_leverage(symbol)
                 # 同步更新本地持仓记录
                 positions.setdefault('positions', [])
                 existing_local = [p for p in positions['positions'] if p['symbol'] == symbol]
@@ -907,10 +827,6 @@ def monitor_loop():
                         }
                         positions['positions'].append(pos); save_positions(positions)
                         logger.info(f"✅ 已从交易所恢复持仓记录: {symbol}")
-                        # 🚨 从交易所恢复后立即校验杠杆（防止历史仓位带了错杠杆）
-                        verify_and_fix_leverage(symbol)
-                        # 重新读取修正后的实际杠杆值
-                        pos['leverage'] = LEVERAGE
                         # 🚨 通知用户：有新仓位被发现并恢复（此前未推送告警）
                         contract_info = next((c for c in contracts_sorted if c['symbol'] == symbol), {})
                         direction_str = '🟢做多' if pos['direction'] == 'long' else '🔴做空'

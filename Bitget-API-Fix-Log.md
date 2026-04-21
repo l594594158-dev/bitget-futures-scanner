@@ -906,3 +906,51 @@ Bitget API 返回值类型不稳定，有的接口返回数字字符串，有的
 **涉及文件：** 无
 
 **自动修复：是**
+
+
+---
+## 自检自动修复：进程异常 - 美股机器人（2026-04-21 01:00）
+
+**问题：** 美股机器人进程未运行
+
+**修复：** 重启机器人: cd /root/.openclaw/workspace && nohup python3 -u trading_bot_us_stocks_v1.py >> bot_us_stocks.log 2>&1 &
+
+**涉及文件：** 无
+
+**自动修复：是**
+
+
+---
+## 自检自动修复：进程异常 - 美股机器人（2026-04-21 01:00）
+
+**问题：** 美股机器人进程未运行
+
+**修复：** 已执行重启命令: cd /root/.openclaw/workspace && nohup python3 -u trading_bot...
+
+**涉及文件：** 无
+
+**自动修复：是**
+
+
+---
+## 自检自动修复：进程异常 - 美股机器人（2026-04-21 02:00）
+
+**问题：** 美股机器人进程未运行
+
+**修复：** 重启机器人: cd /root/.openclaw/workspace && nohup python3 -u trading_bot_us_stocks_v1.py >> bot_us_stocks.log 2>&1 &
+
+**涉及文件：** 无
+
+**自动修复：是**
+
+
+---
+## 自检自动修复：进程异常 - 美股机器人（2026-04-21 02:00）
+
+**问题：** 美股机器人进程未运行
+
+**修复：** 已执行重启命令: cd /root/.openclaw/workspace && nohup python3 -u trading_bot...
+
+**涉及文件：** 无
+
+**自动修复：是**

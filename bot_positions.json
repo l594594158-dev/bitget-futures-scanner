@@ -23,7 +23,7 @@
     "size_usdt": 25,
     "quantity": 0.16467953362756077,
     "entry_time": "2026-04-14T21:51:47.081554",
-    "highest_price": 155.45,
+    "highest_price": 157.81,
     "trailing_stop": 144.21949999999998
   },
   "KATUSDT": {
@@ -32,8 +32,8 @@
     "size_usdt": 25,
     "quantity": 3071.2530712530715,
     "entry_time": "2026-04-15T00:04:32.580704",
-    "highest_price": 0.009647,
-    "trailing_stop": 0.009164649999999998
+    "highest_price": 0.009881,
+    "trailing_stop": 0.009386949999999998
   },
   "CVXUSDT": {
     "entry_price": 1.815,
@@ -52,5 +52,41 @@
     "entry_time": "2026-04-17T21:45:26.418557",
     "highest_price": 688.44,
     "trailing_stop": 649.8
+  },
+  "SPYONUSDT": {
+    "entry_price": 711.92,
+    "stop_loss": 0.05,
+    "size_usdt": 40,
+    "quantity": 0.05618608832453085,
+    "entry_time": "2026-04-20T21:02:05.953219",
+    "highest_price": 713.33,
+    "trailing_stop": 676.324
+  },
+  "QQQONUSDT": {
+    "entry_price": 648.78,
+    "stop_loss": 0.06,
+    "size_usdt": 40,
+    "quantity": 0.06165418169487346,
+    "entry_time": "2026-04-20T21:02:12.563164",
+    "highest_price": 650.06,
+    "trailing_stop": 609.8531999999999
+  },
+  "IVVONUSDT": {
+    "entry_price": 715.96,
+    "stop_loss": 0.05,
+    "size_usdt": 40,
+    "quantity": 0.055869042963294036,
+    "entry_time": "2026-04-20T21:08:06.604200",
+    "highest_price": 717.42,
+    "trailing_stop": 680.162
+  },
+  "GOOGLONUSDT": {
+    "entry_price": 340.85,
+    "stop_loss": 0.05,
+    "size_usdt": 40,
+    "quantity": 0.11735367463693706,
+    "entry_time": "2026-04-20T21:19:46.477628",
+    "highest_price": 340.85,
+    "trailing_stop": 323.8075
   }
 }

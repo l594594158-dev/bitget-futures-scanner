@@ -1,71 +1,115 @@
 {
-  "update_time": "2026-04-20 11:10:05",
+  "update_time": "2026-04-21 09:20:11",
   "contracts": [
     {
-      "symbol": "PIEVERSEUSDT",
-      "lastPr": 1.32771,
-      "high24h": 1.48599,
-      "low24h": 0.5709,
-      "change24h": 1.01122,
-      "quoteVolume": 164090651.67357,
-      "baseVolume": 157243333.0,
-      "fundingRate": 0.000468,
-      "add_time": "2026-04-20 11:10:04"
+      "symbol": "RAVEUSDT",
+      "lastPr": 1.04033,
+      "high24h": 1.3,
+      "low24h": 0.4788,
+      "change24h": 1.13331,
+      "quoteVolume": 199385540.98852,
+      "baseVolume": 277247857.0,
+      "fundingRate": 0.000233,
+      "add_time": "2026-04-21 09:20:10"
+    },
+    {
+      "symbol": "UAIUSDT",
+      "lastPr": 0.31229,
+      "high24h": 0.31666,
+      "low24h": 0.20828,
+      "change24h": 0.46313,
+      "quoteVolume": 6920039.67013,
+      "baseVolume": 25052905.0,
+      "fundingRate": 5e-05,
+      "add_time": "2026-04-21 09:20:09"
+    },
+    {
+      "symbol": "BASEDUSDT",
+      "lastPr": 0.1276,
+      "high24h": 0.1307,
+      "low24h": 0.0883,
+      "change24h": 0.39454,
+      "quoteVolume": 27871872.3577,
+      "baseVolume": 257275379.0,
+      "fundingRate": 5e-05,
+      "add_time": "2026-04-21 09:20:11"
+    },
+    {
+      "symbol": "BASUSDT",
+      "lastPr": 0.010523,
+      "high24h": 0.011117,
+      "low24h": 0.0076,
+      "change24h": 0.3051,
+      "quoteVolume": 1720589.347712,
+      "baseVolume": 183376735.0,
+      "fundingRate": 5e-05,
+      "add_time": "2026-04-21 09:20:08"
+    },
+    {
+      "symbol": "NAORISUSDT",
+      "lastPr": 0.0675,
+      "high24h": 0.0725,
+      "low24h": 0.05119,
+      "change24h": 0.29933,
+      "quoteVolume": 3432387.9726,
+      "baseVolume": 53825651.0,
+      "fundingRate": 5e-05,
+      "add_time": "2026-04-21 09:20:07"
+    },
+    {
+      "symbol": "CETUSUSDT",
+      "lastPr": 0.02647,
+      "high24h": 0.027,
+      "low24h": 0.02113,
+      "change24h": 0.24976,
+      "quoteVolume": 777446.96706,
+      "baseVolume": 31036724.0,
+      "fundingRate": 5e-05,
+      "add_time": "2026-04-21 09:20:07"
+    },
+    {
+      "symbol": "APRUSDT",
+      "lastPr": 0.174,
+      "high24h": 0.1866,
+      "low24h": 0.14109,
+      "change24h": 0.22028,
+      "quoteVolume": 2519706.55394,
+      "baseVolume": 14737351.0,
+      "fundingRate": 5e-05,
+      "add_time": "2026-04-21 09:20:09"
+    },
+    {
+      "symbol": "BSBUSDT",
+      "lastPr": 0.28457,
+      "high24h": 0.37533,
+      "low24h": 0.21932,
+      "change24h": 0.21971,
+      "quoteVolume": 8317606.0508,
+      "baseVolume": 29449114.0,
+      "fundingRate": 5e-05,
+      "add_time": "2026-04-21 09:20:10"
     },
     {
       "symbol": "GUNUSDT",
-      "lastPr": 0.02197,
-      "high24h": 0.02358,
-      "low24h": 0.01464,
-      "change24h": 0.46272,
-      "quoteVolume": 13629737.35119,
-      "baseVolume": 680691398.0,
+      "lastPr": 0.02594,
+      "high24h": 0.02945,
+      "low24h": 0.01921,
+      "change24h": 0.21499,
+      "quoteVolume": 47582193.45576,
+      "baseVolume": 1985518835.0,
       "fundingRate": 5e-05,
-      "add_time": "2026-04-20 11:10:04"
+      "add_time": "2026-04-21 09:10:07"
     },
     {
-      "symbol": "IRYSUSDT",
-      "lastPr": 0.03275,
-      "high24h": 0.03315,
-      "low24h": 0.02535,
-      "change24h": 0.28583,
-      "quoteVolume": 1402850.34908,
-      "baseVolume": 47069736.0,
+      "symbol": "ORDIUSDT",
+      "lastPr": 5.077,
+      "high24h": 5.347,
+      "low24h": 4.031,
+      "change24h": 0.21227,
+      "quoteVolume": 58529993.2009,
+      "baseVolume": 12476174.07,
       "fundingRate": 5e-05,
-      "add_time": "2026-04-20 11:10:05"
-    },
-    {
-      "symbol": "SPKUSDT",
-      "lastPr": 0.02824,
-      "high24h": 0.02865,
-      "low24h": 0.022,
-      "change24h": 0.28364,
-      "quoteVolume": 1648313.16468,
-      "baseVolume": 65602819.0,
-      "fundingRate": 5e-05,
-      "add_time": "2026-04-20 11:10:04"
-    },
-    {
-      "symbol": "BLURUSDT",
-      "lastPr": 0.0322,
-      "high24h": 0.0378,
-      "low24h": 0.02636,
-      "change24h": 0.21555,
-      "quoteVolume": 29151392.392325,
-      "baseVolume": 905137011.9,
-      "fundingRate": -0.002715,
-      "add_time": "2026-04-20 10:50:05"
-    },
-    {
-      "symbol": "BOMEUSDT",
-      "lastPr": 0.0005921,
-      "high24h": 0.0008917,
-      "low24h": 0.0004823,
-      "change24h": 0.20004,
-      "quoteVolume": 19377493.6352329,
-      "baseVolume": 30529907138.0,
-      "fundingRate": 5e-05,
-      "add_time": "2026-04-20 09:00:05"
+      "add_time": "2026-04-21 08:55:07"
     }
   ]
 }

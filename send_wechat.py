@@ -11,8 +11,16 @@ def send_via_gateway(msg):
     token = '98b3e2eeef28335b376f123b0ee565f47fb0da23c3bdd387'
     try:
         req = urllib.request.Request(
-            'http://127.0.0.1:13596/v1/channels/openclaw-weixin/messages',
-            data=json.dumps({'content': msg}).encode(),
+            'http://127.0.0.1:13596/tools/invoke',
+            data=json.dumps({
+                "tool": "message",
+                "args": {
+                    "action": "send",
+                    "channel": "openclaw-weixin",
+                    "to": "liugang123@im.wechat",
+                    "message": msg
+                }
+            }).encode(),
             headers={
                 'Authorization': f'Bearer {token}',
                 'Content-Type': 'application/json'
