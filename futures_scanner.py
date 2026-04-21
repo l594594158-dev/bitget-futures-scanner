@@ -371,122 +371,6 @@ def compute_momentum_slowdown(closes, vols, period=10):
         return True, min(slowdown_ratio, 1.0)
     return False, 0.0
 
-def compute_consecutive_rise(cl1, hi1, lo1, hours=4):
-    """
-    检测是否连续N小时上涨（每根1H K线收阳线）。
-    用于做空前置条件：涨得太久=回调风险积累。
-    cl1: 每根K线的收盘价列表
-    hi1: 每根K线的最高价列表
-    lo1: 每根K线的最低价列表
-    Bitget 1H K线格式: [timestamp, open, high, low, close, volume]
-    返回: (是否连续上涨, 连续上涨小时数)
-    """
-    if cl1 is None or len(cl1) < hours + 1:
-        return False, 0
-    # 每根K线的开盘价 = 前一根K线的收盘价（复盘）
-    consecutive = 0
-    for i in range(1, hours + 1):
-        # 当前K线：开盘=cl1[-i-1]，收盘=cl1[-i]
-        open_h = cl1[-(i + 1)]
-        close_h = cl1[-i]
-        if close_h > open_h:
-            consecutive += 1
-        else:
-            break
-    return consecutive >= hours, consecutive
-
-
-# ==================== 信号分析 v4 ====================
-# ==================== 做空信号配置（可单独调整）====================
-SHORT_CONFIG = {
-    # ── 主模式：RSI负背离型 ──
-    'require_rsi_div': True,          # 是否要求RSI负背离（True=必须，False=跳过）
-    'require_consecutive_rise': True,  # 是否要求连续4小时上涨（做空前置条件）
-    'adx_min': 20,                    # ADX最小值（趋势需明显）
-    'adx_max': 75,                    # ADX>此值则禁止做空（强趋势易延续，75≈ADX极强）
-    'di_minus_stronger': True,        # DI-必须大于DI+（空头主导）
-    'bb_dev_threshold': 2.0,          # 布林偏离中轨幅度阈值（%）
-    'vol_weak_threshold': 0.5,        # 缩量阈值（vr < 此值 = 缩量滞涨）
-    'momentum_slowdown_min': 0.5,     # 动量衰竭最小值
-    'vr_strong_for_bb': 1.5,          # 放量时vr阈值（vr>此值 = 放量）
-    'adx_for_strong_vol': 25,         # 放量时要求ADX>此值
-    'extra_require': 1,               # 附加条件至少满足几条（0=不要求）
-
-    # ── 暴涨快捷模式（日涨幅>阈值时启用，跳过RSI负背离）──
-    'surge_mode_enabled': True,       # 开启暴涨快捷模式
-    'surge_day_change_thresh': 0.25, # 触发暴涨模式的日涨幅阈值（25%以上）
-    'surge_adx_min': 25,              # 暴涨模式ADX最小值（放宽）
-    'surge_retrace_min': 0.05,       # 从日内高点最小回落比例（5%）
-    'surge_vr_max': 1.5,             # 暴涨模式：5分钟+1小时双重缩量（vr5 AND vr1 同时 < 此值）
-    'surge_bb_dev': 1.0,             # 暴涨模式：布林偏离度（%）
-    'surge_adx_max': 70,             # 暴涨模式ADX上限（趋势过强不做空，ADX>70=强趋势）
-}
-
-def check_short_signal(price, c5, c1, change24h,
-                       has_bear_div, bear_div_type,
-                       adx1, dip1, dim1,
-                       bb_up5, bb_mid5, bb_lo5, bb_dev,
-                       vr5, vr1, mom_slowdown, slowdown_deg,
-                       has_consecutive_rise, consecutive_rise_hours,
-                       extra_short):
-    """
-    独立的做空信号判断函数（可独立于analyze_symbol调用和测试）
-    支持两种模式：主模式（RSI负背离）和暴涨快捷模式
-    """
-    cfg = SHORT_CONFIG
-    reasons = []
-
-    # ── 判断使用哪种模式 ──
-    use_surge = cfg['surge_mode_enabled'] and change24h >= cfg['surge_day_change_thresh']
-
-    if use_surge:
-        # ══ 暴涨快捷模式：不用等RSI负背离 ══
-        # 条件①：ADX在合理区间（趋势强但不极端）
-        c1_surge = adx1 and cfg['surge_adx_min'] <= adx1 <= cfg['surge_adx_max']
-        # 条件②：从日内高点回落（高位滞涨）
-        # 用5m K线计算日内高点
-        hi5 = [float(c[2]) for c in c5] if c5 else []
-        peak_today = max(hi5[-60:]) if len(hi5) >= 12 else max(hi5[-len(hi5):])  # 最近12根5m≈1小时
-        retrace_pct = (peak_today - price) / peak_today if peak_today > 0 else 0
-        c2_surge = retrace_pct >= cfg['surge_retrace_min']
-        # 条件③：5分钟 AND 1小时双重缩量，或布林偏离（二者满足其一）
-        # 双重保险：5分钟vr5 + 1小时vr1 同时缩量 → 做空胜率更高
-        c3_surge = (vr5 < cfg['surge_vr_max'] and vr1 < cfg['surge_vr_max']) or bb_dev >= cfg['surge_bb_dev']
-        # 附加条件
-        extra_ok = len(extra_short) >= cfg['extra_require']
-
-        short_ok = c1_surge and c2_surge and c3_surge and extra_ok
-        reasons.append(
-            f"做空[暴涨🚀]: ①ADX={adx1:.1f}∈[{cfg['surge_adx_min']},{cfg['surge_adx_max']}]={'✅' if c1_surge else '❌'} "
-            f"②回落{retrace_pct*100:.1f}%>={cfg['surge_retrace_min']*100:.0f}%={'✅' if c2_surge else '❌'} "
-            f"③布林偏离={bb_dev:.1f}%/vr5={vr5:.2f}&vr1={vr1:.2f}={'✅' if c3_surge else '❌'} "
-            f"④附加={'✅' if extra_ok else '❌'}{extra_short}"
-        )
-    else:
-        # ══ 主模式：RSI负背离型 ══
-        if cfg['require_rsi_div']:
-            c1 = has_bear_div and bear_div_type == 'bearish'
-        else:
-            c1 = True  # 不要求RSI背离
-        c2 = adx1 and cfg['adx_min'] <= adx1 <= cfg['adx_max'] and (
-            dim1 > dip1 if cfg['di_minus_stronger'] else True)
-        c3 = bb_dev >= cfg['bb_dev_threshold']
-        # 条件④：连续4小时上涨（涨太久=回调风险积累，做空前置条件）
-        c4_rise = has_consecutive_rise if cfg.get('require_consecutive_rise', True) else True
-        extra_ok = len(extra_short) >= cfg['extra_require']
-
-        short_ok = c1 and c2 and c3 and c4_rise and extra_ok
-        reasons.append(
-            f"做空[主模式📉]: ①RSI负背离={'✅' if c1 else '❌'} "
-            f"②ADX={adx1:.1f}∈[{cfg['adx_min']},{cfg['adx_max']}]={'✅' if c2 else '❌'} "
-            f"③布林偏离={bb_dev:.1f}%>={cfg['bb_dev_threshold']}%={'✅' if c3 else '❌'} "
-            f"④连续4h上涨={'✅' if c4_rise else '❌'}({consecutive_rise_hours}h) "
-            f"⑤附加={'✅' if extra_ok else '❌'}{extra_short}"
-        )
-
-    return short_ok, " | ".join(reasons)
-
-
 def analyze_symbol(symbol):
     """
     基于特定条件组合的开仓信号判断（AND逻辑）
@@ -541,8 +425,6 @@ def analyze_symbol(symbol):
     has_bull_div, bull_div_type = compute_rsi_divergence(cl5)
     # 动量衰竭
     mom_slowdown, slowdown_deg = compute_momentum_slowdown(cl5, vo5)
-    # 连续上涨检测（做空前置条件）
-    has_consecutive_rise, consecutive_rise_hours = compute_consecutive_rise(cl1, hi1, lo1, hours=4)
 
     # ===================== 信号判断核心逻辑 =====================
     # 【改进】量价分析作为第一优先级，极端行情币种更依赖量能确认方向
@@ -597,8 +479,7 @@ def analyze_symbol(symbol):
         adx1, dip1, dim1,
         bb_up5, bb_mid5, bb_lo5, bb_dev,
         vr5, vr1, mom_slowdown, slowdown_deg,
-        has_consecutive_rise, consecutive_rise_hours,
-        extra_short
+            extra_short
     )
     reasons.append(short_reason)
 
@@ -802,19 +683,7 @@ def close_position(symbol, direction, size):
     return None
 
 def alert_to_queue(title, content):
-    try:
-        import uuid
-        queue = {"alerts": [], "last_sent": None}
-        if os.path.exists(ALERT_FILE):
-            with open(ALERT_FILE) as f: queue = json.load(f)
-        queue["alerts"].append({
-            "id": str(uuid.uuid4())[:8], "title": title, "content": content,
-            "time": datetime.now().strftime('%Y-%m-%d %H:%M:%S')
-        })
-        with open(ALERT_FILE, 'w') as f: json.dump(queue, f, ensure_ascii=False, indent=2)
-        logger.info(f"📤 告警入队: {title}")
-    except Exception as e:
-        logger.error(f"告警入队失败: {e}")
+    pass  # 通知已禁用
 
 
 # ==================== 监测循环 ====================
