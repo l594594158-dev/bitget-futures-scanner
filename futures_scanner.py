@@ -1,4 +1,6 @@
+import os
 #!/usr/bin/env python3
+import os
 """
 Bitget 合约涨幅扫描 + 实战交易机器人 v4
 =========================================
@@ -62,7 +64,7 @@ POSITION_SIZE = 2.0
 LEVERAGE = 10
 MARGIN_MODE = "isolated"
 COOLDOWN_SECONDS = 300
-TRAIL_TRIGGER_PCT = 0.095    # 移动止盈触发：盈利≥6%激活
+TRAIL_TRIGGER_PCT = 0.06    # 移动止盈触发：盈利≥6%激活
 TRAIL_EXIT_PCT = 0.04       # 移动止盈退出：从峰值回撤4%
 # ==================== P0 修复：止损 + 波动率调仓 ====================
 FIXED_STOP_PCT = 0.09      # 固定止损：亏损9%立即止损（与移动止盈并存）
