@@ -402,7 +402,7 @@ SHORT_CONFIG = {
     # ── 主模式：RSI负背离型 ──
     'require_rsi_div': True,          # 是否要求RSI负背离（True=必须，False=跳过）
     'adx_min': 20,                    # ADX最小值（趋势需明显）
-    'adx_max': 75,                    # ADX>此值则禁止做空（强趋势易延续，75≈ADX极强）
+    'adx_max': 60,                    # ADX>此值则禁止做空（ADX>60=强趋势，逆势容易被爆）
     'di_minus_stronger': True,        # DI-必须大于DI+（空头主导）
     'bb_dev_threshold': 2.0,          # 布林偏离中轨幅度阈值（%）
     'vol_weak_threshold': 0.5,        # 缩量阈值（vr < 此值 = 缩量滞涨）
