@@ -34,6 +34,7 @@ TRAIL_TRIGGER_PCT = 0.08    # 盈利>8%激活
 TRAIL_EXIT_PCT = 0.04       # 距离峰值4%止盈
 FIXED_STOP_PCT = 0.09       # 固定止损-9%
 SCAN_INTERVAL = 5            # 扫描间隔5秒
+SYNC_INTERVAL = 30           # 从db_positions.json同步间隔30秒
 PRODUCT_TYPE = 'USDT-FUTURES'
 
 # ========== API工具 ==========
@@ -149,6 +150,40 @@ def init_db():
     save_db(db)
     return db
 
+# ========== 从db_positions.json同步峰值价格（仅补充已有持仓，不添加新记录） ==========
+def sync_from_db2():
+    """每30秒：从db_positions.json同步峰值价格，仅补充API已有持仓，不添加幽灵记录"""
+    DB2_SRC = f'{WORKSPACE}/db_positions.json'
+    if not os.path.exists(DB2_SRC):
+        return
+
+    try:
+        with open(DB2_SRC, 'r') as f:
+            src = json.load(f)
+        src_positions = src.get('positions', [])
+        if not src_positions:
+            return
+
+        db = load_db()
+        db_syms = set(db['positions'].keys())
+
+        synced = 0
+        for pos in src_positions:
+            sym = pos.get('symbol', '')
+            direction = pos.get('direction', '')
+            key = f"{sym}_{direction}"
+            if key in db_syms:
+                # 只同步峰值价格，不添加新记录
+                if pos.get('peak_price'):
+                    db['positions'][key]['peak_price'] = float(pos['peak_price'])
+                    synced += 1
+
+        if synced > 0:
+            save_db(db)
+            logger(f"🔄 同步峰值: {synced}个")
+    except Exception as e:
+        logger(f"⚠️ 同步异常: {e}")
+
 # ========== 获取持仓 ==========
 def get_all_positions():
     """获取所有持仓（带重试和降级）"""
@@ -174,6 +209,8 @@ def get_all_positions():
                 data_field = pos_data.get('data')
                 if isinstance(data_field, list):
                     positions = [p for p in data_field if float(p.get('total', 0)) > 0]
+        
+        logger(f"📡 API持仓: {len(positions)}个")
     else:
         # all-position 失败，尝试从数据库缓存获取上次成功数据
         db = load_db()
@@ -222,10 +259,6 @@ def should_trail_exit(direction: str, entry_price: float, current_price: float,
     
     pnl = calculate_pnl(direction, entry_price, current_price)
     
-    # 固定止损
-    if pnl <= -FIXED_STOP_PCT * 100:
-        return True, f'固定止损({pnl:.2f}%)'
-    
     # 移动止盈激活后，从峰值回撤4%退出
     if direction == 'short':
         # 做空：peak是最低价，回撤=(当前价-峰值)/峰值
@@ -255,23 +288,35 @@ def should_activate_trail(pnl: float) -> bool:
 
 # ========== 平仓 ==========
 def close_position(symbol: str, direction: str, size: float) -> bool:
-    """市价平仓"""
-    side = 'buy' if direction == 'short' else 'sell'  # 平空头=买，平多头=卖
+    """市价平仓（hedge模式）"""
+    # 平仓：side和开仓相反，但posSide/direction保持一致
+    # 平多仓：side=buy, posSide=long
+    # 平空仓：side=sell, posSide=short
+    if direction == 'long':
+        side = 'buy'
+        pos_side = 'long'
+    else:
+        side = 'sell'
+        pos_side = 'short'
+    
     body = {
         'symbol': symbol,
         'productType': PRODUCT_TYPE,
         'marginCoin': 'USDT',
+        'marginMode': 'isolated',
         'side': side,
+        'posSide': pos_side,
+        'tradeSide': 'close',
         'orderType': 'market',
-        'size': str(size)
+        'size': str(int(size))
     }
     
-    result = api_request('POST', '/api/v2/mix/order/place-market-order', body=body)
-    if result:
+    result = api_request('POST', '/api/v2/mix/order/place-order', body=body)
+    if result and result.get('code') in ('00000', '0'):
         logger(f"✅ {symbol} 平仓成功: {side} {size}")
         return True
     else:
-        logger(f"❌ {symbol} 平仓失败")
+        logger(f"❌ {symbol} 平仓失败: {result}")
         return False
 
 # ========== 主监控循环 ==========
@@ -279,13 +324,19 @@ def monitor_loop():
     """主监控循环"""
     logger("=" * 50)
     logger("移动止盈v2启动")
-    logger(f"参数: 激活>{TRAIL_TRIGGER_PCT*100}% | 回撤>{TRAIL_EXIT_PCT*100}% | 止损>{FIXED_STOP_PCT*100}% | 间隔{SCAN_INTERVAL}秒")
+    logger(f"参数: 激活>{TRAIL_TRIGGER_PCT*100}% | 回撤>{TRAIL_EXIT_PCT*100}% | 固定止损>{FIXED_STOP_PCT*100}% | 间隔{SCAN_INTERVAL}秒")
     logger("=" * 50)
     
     db = init_db()
     
+    sync_counter = 0  # 0=立即同步
     while True:
         try:
+            # 每SYNC_INTERVAL秒从db_positions.json同步一次
+            if sync_counter <= 0:
+                sync_from_db2()
+                sync_counter = SYNC_INTERVAL // SCAN_INTERVAL
+            sync_counter -= 1
             # 1. 获取所有持仓
             positions = get_all_positions()
             active_symbols = set()
@@ -296,8 +347,8 @@ def monitor_loop():
                 if size <= 0:
                     continue
                 
-                active_symbols.add(symbol)
                 direction = 'short' if p.get('holdSide') == 'short' else 'long'
+                active_symbols.add(f"{symbol}_{direction}")
                 side = 'sell' if direction == 'short' else 'buy'
                 entry_price = float(p.get('openPriceAvg', 0))
                 mark_price = float(p.get('markPrice', 0))
@@ -315,9 +366,9 @@ def monitor_loop():
                 # 3. 计算盈亏
                 pnl = calculate_pnl(direction, entry_price, current_price)
                 
-                # 4. 更新峰值
-                db = load_db()
-                pos_info = db['positions'].get(symbol, {})
+                # 获取历史峰值（用symbol_direction作为key）
+                pos_key = f"{symbol}_{direction}"
+                pos_info = db['positions'].get(pos_key, {})
                 
                 # 获取历史峰值
                 peak_price = pos_info.get('peak_price', current_price if direction == 'long' else current_price)
@@ -353,17 +404,20 @@ def monitor_loop():
                     
                     # 执行平仓
                     if close_position(symbol, direction, size):
-                        # 清空该币种记录
+                        # 清空该币种记录（用symbol_direction作为key）
                         db = load_db()
-                        if symbol in db['positions']:
-                            del db['positions'][symbol]
+                        pos_key = f"{symbol}_{direction}"
+                        if pos_key in db['positions']:
+                            del db['positions'][pos_key]
                             save_db(db)
                             logger(f"🗑️ {symbol} 记录已清空")
                         continue
                 
-                # 7. 写入数据库
+                # 7. 写入数据库（key用symbol_direction区分多空）
                 db = load_db()
-                db['positions'][symbol] = {
+                pos_key = f"{symbol}_{direction}"
+                db['positions'][pos_key] = {
+                    'symbol': symbol,
                     'direction': direction,
                     'side': side,
                     'entry_price': entry_price,
@@ -385,9 +439,10 @@ def monitor_loop():
             db_symbols = set(db['positions'].keys())
             closed_symbols = db_symbols - active_symbols
             if closed_symbols:
-                for symbol in closed_symbols:
-                    logger(f"🗑️ {symbol} 已平仓/爆仓，清除记录")
-                    del db['positions'][symbol]
+                for pos_key in closed_symbols:
+                    sym = pos_key.rsplit('_', 1)[0]
+                    logger(f"🗑️ {sym} 已平仓/爆仓，清除记录")
+                    del db['positions'][pos_key]
                 save_db(db)
             
             # 9. 打印状态

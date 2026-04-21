@@ -1,9 +1,0 @@
-2026-04-06 22:08:17,305 - INFO - ==================================================
-2026-04-06 22:08:17,307 - INFO - 🚀 Bitget 美股交易机器人 v2 启动
-2026-04-06 22:08:17,307 - INFO - 监控标的: 8 个
-2026-04-06 22:08:17,308 - INFO - 开仓金额: 25 U/笔
-2026-04-06 22:08:17,308 - INFO - 扫描间隔: 600 秒 (10分钟)
-2026-04-06 22:08:17,308 - INFO - ==================================================
-/root/.openclaw/workspace/trading_bot.py:386: DeprecationWarning: datetime.datetime.utcnow() is deprecated and scheduled for removal in a future version. Use timezone-aware objects to represent datetimes in UTC: datetime.datetime.now(datetime.UTC).
-  now = datetime.utcnow()
-2026-04-06 22:08:17,523 - INFO - [22:08:17] ⏸ 非开盘时段

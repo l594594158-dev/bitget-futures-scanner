@@ -954,3 +954,132 @@ Bitget API 返回值类型不稳定，有的接口返回数字字符串，有的
 **涉及文件：** 无
 
 **自动修复：是**
+
+
+---
+## 自检自动修复：进程异常 - 合约监测（2026-04-21 21:00）
+
+**问题：** 合约监测进程未运行
+
+**修复：** supervisorctl start futures_monitor
+
+**涉及文件：** 无
+
+**自动修复：是**
+
+
+---
+## 自检自动修复：进程异常 - 合约监测（2026-04-21 21:00）
+
+**问题：** 合约监测进程未运行
+
+**修复：** 已执行重启命令: supervisorctl start futures_monitor...
+
+**涉及文件：** 无
+
+**自动修复：是**
+
+---
+## Bitget Hedge模式API深度修复（2026-04-22 01:03）
+
+### 问题描述
+无法在hedge_mode下的合约账户进行开仓、平仓、挂止损单，报错：
+- 开仓：`40774 The order type for unilateral position must also be the unilateral position type`
+- 平仓限价单：`22002 No position to close`
+- 止损计划单：各类planType值全部拒绝
+
+### 根本原因
+Bitget hedge_mode（双向持仓模式）下，API参数与one-way模式完全不同：
+- `tradeSide` 参数是hedge模式的核心，必须明确指定
+- 平仓时 `side` 的方向与开仓时相反（不是"买平多/卖平空"，而是"买=平多，sell=平空"）
+- `posSide` 必须与持仓方向一致
+
+### 正确API参数（hedge模式）
+
+| 操作 | side | posSide | tradeSide |
+|------|------|---------|-----------|
+| 开多仓 | buy | long | open |
+| 开空仓 | sell | short | open |
+| 平多仓 | **buy** | long | close |
+| 平空仓 | **sell** | short | close |
+
+### 修复的文件
+
+#### 1. surge_trader.py（开仓机器人）
+
+**open_position()函数：**
+```python
+# 修复前：
+'orderType': 'market',
+'size': str(size),
+
+# 修复后：
+'side': side,          # buy=多, sell=空
+'posSide': 'long' if side == 'buy' else 'short',
+'tradeSide': 'open',
+'orderType': 'market',
+'size': str(size),
+```
+
+**place_limit_close()函数：**
+```python
+# 修复前（错误）：
+close_side = 'sell' if side == 'buy' else 'buy'
+
+# 修复后（正确）：
+if side == 'buy':      # 多单
+    close_side = 'buy'       # 平多仓用buy（不是sell！）
+    pos_side = 'long'
+else:                  # 空单
+    close_side = 'sell'      # 平空仓用sell（不是buy！）
+    pos_side = 'short'
+# 同时加上 tradeSide='close'
+```
+
+#### 2. trailing_stop_v2.py（移动止盈）
+
+**close_position()函数：**
+```python
+# 修复前（错误）：
+side = 'buy' if direction == 'short' else 'sell'
+body = {
+    'side': side,
+    'orderType': 'market',
+    'size': str(size)
+}
+# 用 place-market-order 接口（不存在，404）
+
+# 修复后（正确）：
+if direction == 'long':
+    side = 'buy'
+    pos_side = 'long'
+else:
+    side = 'sell'
+    pos_side = 'short'
+body = {
+    'symbol': symbol,
+    'productType': PRODUCT_TYPE,
+    'marginCoin': 'USDT',
+    'marginMode': 'isolated',
+    'side': side,
+    'posSide': pos_side,
+    'tradeSide': 'close',
+    'orderType': 'market',
+    'size': str(int(size))
+}
+# 用 /api/v2/mix/order/place-order 接口
+```
+
+### 关键API端点
+- 开仓/平仓/挂止损：`POST /api/v2/mix/order/place-order`
+- 平仓（专用）：`POST /api/v2/mix/order/close-positions`
+- 止盈止损计划：`POST /api/v2/mix/order/place-plan-order`（planType待定）
+- 计划委托历史：`GET /api/v2/mix/order/orders-plan-pending`
+
+### 验证结果
+| 功能 | 状态 |
+|------|------|
+| 开仓（DENTUSDT long）| ✅ 成功 |
+| 平仓限价止损单 | ✅ 成功 |
+| 市价平仓（close-positions）| ✅ 成功 |
+| 移动止盈脚本市价平仓 | ✅ 成功 |
