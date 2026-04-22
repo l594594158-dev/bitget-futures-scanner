@@ -49,21 +49,11 @@ MARGIN_MODE = 'isolated'        # 逐仓
 # ========== 止盈参数 ==========
 LIMIT_STOP_PCT = 0.08           # 止损：多单-8%，空单+8%
 
-# ========== 做多信号条件（5个全满足）==========
-LONG_BB_DEV = 2.0                # 布林偏离≥2%
-LONG_ADX = 30                    # ADX≥30
-LONG_VR_MAX = 1.5               # vr1<1.5
-LONG_RETRACE_MAX = 0.10         # (已废弃，用BB≥2%替代回踩判断)
-LONG_RSI_MIN = 55               # RSI≥55
-LONG_RSI_MAX = 75               # RSI≤75
+# ========== 做多信号条件 ==========
+# 动量未衰竭（15m K线判断）
 
-# ========== 做空信号条件（5个全满足）==========
-SHORT_BB_DEV = 5.0              # 布林偏离≥5%
-SHORT_ADX = 35                  # ADX≥35
-SHORT_VR_MIN = 2.0              # vr1>2.0
-SHORT_RSI_MIN = 75              # RSI≥75
-SHORT_RSI_MAX = 92              # RSI≤92
-SHORT_RETRACE_MIN = 0.08        # 日内回落≥8%
+# ========== 做空信号条件 ==========
+# 动量衰竭（15m K线判断）
 
 # ========== API工具 ==========
 def sign(message: str, secret: str) -> str:
@@ -537,32 +527,42 @@ def scan_and_trade():
         if size <= 0:
             continue
 
-        # 双向开仓：多单+空单同时开
-        logger(f"📊 {symbol} 入库，开仓多空双向")
+        # 检查做多/做空信号
+        signal_long, long_msg = check_signal_long(symbol, coin.get('change24h', 0))
+        signal_short, short_msg = check_signal_short(symbol, coin.get('change24h', 0))
+        logger(f"  🔍 {long_msg} | {short_msg}")
 
-        # 开多单
-        order_id_long = open_position(symbol, 'buy', size)
-        if order_id_long:
-            time.sleep(1)
-            entry_long = get_entry_price(symbol)
-            if entry_long > 0:
-                place_limit_close(symbol, 'buy', entry_long, size)
-            logger(f"  ✅ 多单开仓成功 size={size}")
-        else:
-            logger(f"  ⚠️ 多单开仓失败")
+        opened = False
+        # 动量未衰竭 → 开多
+        if signal_long:
+            logger(f"  📊 {symbol} 动量未衰竭，开多单")
+            order_id = open_position(symbol, 'buy', size)
+            if order_id:
+                time.sleep(1)
+                entry = get_entry_price(symbol)
+                if entry > 0:
+                    place_limit_close(symbol, 'buy', entry, size)
+                logger(f"  ✅ 多单开仓成功 size={size}")
+            else:
+                logger(f"  ⚠️ 多单开仓失败")
+            opened = True
 
-        # 开空单
-        order_id_short = open_position(symbol, 'sell', size)
-        if order_id_short:
-            time.sleep(1)
-            entry_short = get_entry_price(symbol)
-            if entry_short > 0:
-                place_limit_close(symbol, 'sell', entry_short, size)
-            logger(f"  ✅ 空单开仓成功 size={size}")
-        else:
-            logger(f"  ⚠️ 空单开仓失败")
+        # 动量衰竭 → 开空
+        if signal_short:
+            logger(f"  📊 {symbol} 动量衰竭，开空单")
+            order_id = open_position(symbol, 'sell', size)
+            if order_id:
+                time.sleep(1)
+                entry = get_entry_price(symbol)
+                if entry > 0:
+                    place_limit_close(symbol, 'sell', entry, size)
+                logger(f"  ✅ 空单开仓成功 size={size}")
+            else:
+                logger(f"  ⚠️ 空单开仓失败")
+            opened = True
 
-        set_cooldown(symbol)
+        if opened:
+            set_cooldown(symbol)
 
 
 # ========== 主循环 ==========
@@ -580,8 +580,8 @@ def main():
         logger("极端行情交易机器人启动")
         logger(f"热点库: 每{HOT_SCAN_INTERVAL}秒扫描")
         logger(f"交易扫描: 每{TRADE_SCAN_INTERVAL}秒")
-        logger(f"做多: BB≥{LONG_BB_DEV}% ADX≥{LONG_ADX} vr1<{LONG_VR_MAX} RSI∈[{LONG_RSI_MIN},{LONG_RSI_MAX}] 动量未衰竭")
-        logger(f"做空: BB≥{SHORT_BB_DEV}% ADX≥{SHORT_ADX} vr1>{SHORT_VR_MIN} RSI∈[{SHORT_RSI_MIN},{SHORT_RSI_MAX}] 回落≥{SHORT_RETRACE_MIN*100:.0f}%")
+        logger("做多: 15m动量未衰竭")
+        logger("做空: 15m动量衰竭")
         logger(f"仓位: {POSITION_SIZE}U {LEVERAGE}x {MARGIN_MODE}")
         logger(f"止盈: 限价±{LIMIT_STOP_PCT*100:.0f}%")
         logger("=" * 50)
