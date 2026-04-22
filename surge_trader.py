@@ -34,7 +34,7 @@ BASE_URL = 'https://api.bitget.com'
 
 # ========== 热点库参数 ==========
 HOT_SCAN_INTERVAL = 300          # 5分钟扫描热点库
-GAIN_THRESHOLD = 0.25           # 入库：日涨幅>25%
+GAIN_THRESHOLD = 0.20           # 入库：日涨幅>20%
 REMOVE_THRESHOLD = 0.10         # 出库：日涨幅<10%
 MAX_HOT_SIZE = 10               # 热点库上限
 
