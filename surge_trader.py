@@ -503,26 +503,24 @@ def scan_and_trade():
         symbol = coin['symbol']
 
         # 检查是否已有该币任意方向持仓（DB2或API有持仓都不新开仓）
-        has_existing = False
         if os.path.exists(DB_V2):
             with open(DB_V2, 'r') as f:
                 v2 = json.load(f)
             for key in v2.get('positions', {}):
                 if key.startswith(symbol + '_'):
                     logger(f"  ⏭ {symbol} 数据库2号已有仓位，跳过")
-                    has_existing = True
-                    break
+                    continue  # 跳过这个币，继续下一个
 
-        if not has_existing:
-            pos_data = api_request('GET', '/api/v2/mix/position/single-position',
-                                   params={'symbol': symbol, 'productType': 'USDT-FUTURES', 'marginCoin': 'USDT'})
-            pos_list = pos_data if isinstance(pos_data, list) else pos_data.get('data', []) if isinstance(pos_data, dict) else []
-            if any(float(p.get('total', 0)) > 0 for p in pos_list):
-                logger(f"  ⏭ {symbol} API已有仓位，跳过")
-                continue
+        # API检查持仓（仅当DB2无持仓时）
+        pos_data = api_request('GET', '/api/v2/mix/position/single-position',
+                               params={'symbol': symbol, 'productType': 'USDT-FUTURES', 'marginCoin': 'USDT'})
+        pos_list = pos_data if isinstance(pos_data, list) else pos_data.get('data', []) if isinstance(pos_data, dict) else []
+        if any(float(p.get('total', 0)) > 0 for p in pos_list):
+            logger(f"  ⏭ {symbol} API已有仓位，跳过")
+            continue  # 跳过这个币，继续下一个
 
         if is_in_cooldown(symbol):
-            continue
+            continue  # 跳过这个币，继续下一个
 
         # 获取价格
         price = float(coin.get('last_price', 0))
