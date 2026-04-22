@@ -495,11 +495,6 @@ def scan_and_trade():
         if is_in_cooldown(symbol):
             continue  # 跳过这个币，继续下一个
 
-        # Check if coin has at least 5 days of K-line data (not new coin)
-        if not is_coin_old_enough(symbol, min_days=5):
-            logger(f"  ⚠️ {symbol} coin listing <5 days, skip")
-            continue
-
         # Get price
         price = float(coin.get('last_price', 0))
         if price <= 0:
