@@ -22,6 +22,7 @@ from datetime import datetime
 WORKSPACE = '/root/.openclaw/workspace'
 DB_HOT = f'{WORKSPACE}/db_hot_contracts.json'    # 数据库1号：热点库
 DB_POS = f'{WORKSPACE}/db_positions.json'         # 数据库1号：持仓记录
+DB_V2 = f'{WORKSPACE}/db_positions_v2.json'       # 数据库2号：真实持仓（与Bitget同步）
 PID_FILE = f'{WORKSPACE}/surge_trader.pid'
 LOG_FILE = f'{WORKSPACE}/surge_trader.log'
 
@@ -33,7 +34,7 @@ BASE_URL = 'https://api.bitget.com'
 
 # ========== 热点库参数 ==========
 HOT_SCAN_INTERVAL = 300          # 5分钟扫描热点库
-GAIN_THRESHOLD = 0.20           # 入库：日涨幅>20%
+GAIN_THRESHOLD = 0.25           # 入库：日涨幅>25%
 REMOVE_THRESHOLD = 0.10         # 出库：日涨幅<10%
 MAX_HOT_SIZE = 10               # 热点库上限
 
@@ -41,18 +42,18 @@ MAX_HOT_SIZE = 10               # 热点库上限
 TRADE_SCAN_INTERVAL = 30        # 30秒扫描交易信号
 
 # ========== 开仓参数 ==========
-POSITION_SIZE = 2               # 每仓保证金 2 USDT
-LEVERAGE = 10                  # 杠杆 10x
+POSITION_SIZE = 10              # 每仓保证金 10 USDT
+LEVERAGE = 1                   # 杠杆 1x（无杠杆）
 MARGIN_MODE = 'isolated'        # 逐仓
 
 # ========== 止盈参数 ==========
 LIMIT_STOP_PCT = 0.08           # 止损：多单-8%，空单+8%
 
 # ========== 做多信号条件（5个全满足）==========
-LONG_BB_DEV = 4.0               # 布林偏离≥4%
-LONG_ADX = 40                   # ADX≥40
+LONG_BB_DEV = 2.0                # 布林偏离≥2%
+LONG_ADX = 30                    # ADX≥30
 LONG_VR_MAX = 1.5               # vr1<1.5
-LONG_RETRACE_MAX = 0.10         # 回踩≤10%
+LONG_RETRACE_MAX = 0.10         # (已废弃，用BB≥2%替代回踩判断)
 LONG_RSI_MIN = 55               # RSI≥55
 LONG_RSI_MAX = 75               # RSI≤75
 
@@ -154,6 +155,10 @@ def compute_rsi(closes, period=14):
     rs = avg_gain / avg_loss
     return 100 - (100 / (1 + rs))
 
+def compute_rsi_tf(closes, period=14):
+    """任意周期RSI（与compute_rsi相同接口，方便多周期调用）"""
+    return compute_rsi(closes, period)
+
 def compute_bollinger(closes, period=20, mult=2):
     if len(closes) < period:
         return closes[-1], closes[-1], closes[-1]
@@ -213,7 +218,7 @@ def compute_momentum_slowdown(closes, volumes):
 def get_klines(symbol, period='5m', limit=100):
     """获取5分钟K线"""
     data = api_request('GET', '/api/v2/mix/market/candles',
-                       params={'symbol': symbol, 'productType': 'USDT-FUTURES', 'period': period, 'limit': limit})
+                       params={'symbol': symbol, 'productType': 'USDT-FUTURES', 'granularity': period, 'limit': limit})
     if not data:
         return None
     if isinstance(data, dict):
@@ -295,118 +300,41 @@ def scan_hot_contracts():
 
 # ========== 信号检测 ==========
 def check_signal_long(symbol, change24h):
-    """检测做多信号（5个条件全满足）"""
-    klines = get_klines(symbol, '5m', 100)
+    """纯动量做多：15m动量未衰竭则顺势开多"""
+    klines = get_klines(symbol, '15m', 100)
     if not klines:
         return False, "无K线数据"
-
-    # 解析K线
     try:
-        c5 = [float(k[4]) for k in klines]     # close
-        h5 = [float(k[2]) for k in klines]     # high
-        l5 = [float(k[3]) for k in klines]     # low
-        v5 = [float(k[5]) for k in klines]     # volume
-        o5 = [float(k[1]) for k in klines]     # open
+        closes = [float(k[4]) for k in klines]
+        volumes = [float(k[5]) for k in klines]
     except:
         return False, "K线解析失败"
 
-    # 获取1小时K线（用于vr1）
-    klines_1h = get_klines(symbol, '1h', 100)
-    if klines_1h:
-        try:
-            v1 = [float(k[5]) for k in klines_1h]
-        except:
-            v1 = v5
-    else:
-        v1 = v5
+    mom_ok, deg = compute_momentum_slowdown(closes, volumes)
+    cond = not mom_ok  # 未衰竭 = 做多信号
 
-    price = c5[-1]
-    bb_up, bb_mid, bb_lo = compute_bollinger(c5)
-    bb_dev = abs(price - bb_mid) / bb_mid * 100 if bb_mid > 0 else 0
-
-    rsi5 = compute_rsi(c5)
-    adx1, dip1, dim1 = compute_adx(h5, l5, c5)
-
-    vr5 = compute_vol_ratio(v5)
-    vr1 = compute_vol_ratio(v1)
-
-    # 日内高点回踩
-    day_high = max(h5[-60:]) if len(h5) >= 60 else max(h5)
-    intraday_retrace = (day_high - price) / day_high if day_high > 0 else 0
-
-    mom_slowdown, slowdown_deg = compute_momentum_slowdown(c5, v5)
-
-    # 5个条件
-    c1 = bb_dev >= LONG_BB_DEV
-    c2 = adx1 >= LONG_ADX and dip1 > dim1
-    c3 = vr1 < LONG_VR_MAX and intraday_retrace <= LONG_RETRACE_MAX
-    c4 = LONG_RSI_MIN <= rsi5 <= LONG_RSI_MAX
-    c5 = not (mom_slowdown and slowdown_deg > 0.3)
-
-    reasons = (
-        f"做多: ①BB偏离={bb_dev:.1f}%≥{LONG_BB_DEV}%={'✅' if c1 else '❌'} "
-        f"②ADX={adx1:.1f}≥{LONG_ADX}+DI+={'✅' if c2 else '❌'} "
-        f"③vr1={vr1:.2f}<{LONG_VR_MAX}+回踩={intraday_retrace*100:.1f}%≤{LONG_RETRACE_MAX*100:.0f}%={'✅' if c3 else '❌'} "
-        f"④RSI={rsi5:.1f}∈[{LONG_RSI_MIN},{LONG_RSI_MAX}]={'✅' if c4 else '❌'} "
-        f"⑤动量={'✅' if c5 else '❌'}"
+    return cond, (
+        f"做多: 动量{'未衰竭✅' if cond else '衰竭❌'} deg={deg:.3f}"
     )
-
-    return (c1 and c2 and c3 and c4 and c5), reasons
 
 def check_signal_short(symbol, change24h):
-    """检测做空信号（5个条件全满足）"""
-    klines = get_klines(symbol, '5m', 100)
+    """纯动量做空：15m动量衰竭则顺势做空"""
+    klines = get_klines(symbol, '15m', 100)
     if not klines:
         return False, "无K线数据"
-
     try:
-        c5 = [float(k[4]) for k in klines]
-        h5 = [float(k[2]) for k in klines]
-        l5 = [float(k[3]) for k in klines]
-        v5 = [float(k[5]) for k in klines]
+        closes = [float(k[4]) for k in klines]
+        volumes = [float(k[5]) for k in klines]
     except:
         return False, "K线解析失败"
 
-    klines_1h = get_klines(symbol, '1h', 100)
-    if klines_1h:
-        try:
-            v1 = [float(k[5]) for k in klines_1h]
-        except:
-            v1 = v5
-    else:
-        v1 = v5
+    mom_ok, deg = compute_momentum_slowdown(closes, volumes)
+    cond = mom_ok and deg > 0.25  # 衰竭且明显
 
-    price = c5[-1]
-    bb_up, bb_mid, bb_lo = compute_bollinger(c5)
-    bb_dev = abs(price - bb_mid) / bb_mid * 100 if bb_mid > 0 else 0
-
-    rsi5 = compute_rsi(c5)
-    adx1, dip1, dim1 = compute_adx(h5, l5, c5)
-
-    vr5 = compute_vol_ratio(v5)
-    vr1 = compute_vol_ratio(v1)
-
-    day_high = max(h5[-60:]) if len(h5) >= 60 else max(h5)
-    intraday_retrace = (day_high - price) / day_high if day_high > 0 else 0
-
-    mom_slowdown, slowdown_deg = compute_momentum_slowdown(c5, v5)
-
-    # 5个条件
-    c1 = bb_dev >= SHORT_BB_DEV
-    c2 = adx1 >= SHORT_ADX
-    c3 = vr1 > SHORT_VR_MIN
-    c4 = SHORT_RSI_MIN <= rsi5 <= SHORT_RSI_MAX
-    c5 = intraday_retrace >= SHORT_RETRACE_MIN
-
-    reasons = (
-        f"做空: ①BB偏离={bb_dev:.1f}%≥{SHORT_BB_DEV}%={'✅' if c1 else '❌'} "
-        f"②ADX={adx1:.1f}≥{SHORT_ADX}={'✅' if c2 else '❌'} "
-        f"③vr1={vr1:.2f}>{SHORT_VR_MIN}={'✅' if c3 else '❌'} "
-        f"④RSI={rsi5:.1f}∈[{SHORT_RSI_MIN},{SHORT_RSI_MAX}]={'✅' if c4 else '❌'} "
-        f"⑤回落={intraday_retrace*100:.1f}%≥{SHORT_RETRACE_MIN*100:.0f}%={'✅' if c5 else '❌'}"
+    return cond, (
+        f"做空: 动量衰竭={'✅' if cond else '❌'} deg={deg:.3f}"
     )
 
-    return (c1 and c2 and c3 and c4 and c5), reasons
 
 # ========== 开仓操作 ==========
 def open_position(symbol: str, side: str, size: float) -> bool:
@@ -422,7 +350,8 @@ def open_position(symbol: str, side: str, size: float) -> bool:
     }
     lev_res = api_request('POST', leverage_path, body=leverage_body)
     if lev_res and lev_res.get('code') not in ('00000', '0', None):
-        logger(f"  杠杆设置失败: {lev_res.get('msg')}")
+        logger(f"  ❌ 杠杆设置失败: {lev_res.get('msg')}，取消开仓")
+        return None
 
     # 开仓（hedge模式需要tradeSide=open）
     order_path = '/api/v2/mix/order/place-order'
@@ -440,6 +369,31 @@ def open_position(symbol: str, side: str, size: float) -> bool:
     res = api_request('POST', order_path, body=order_body)
     if res and (res.get('code') == '00000' or res.get('code') == '0'):
         order_id = res.get('data', {}).get('orderId', '')
+        # 验证：检查开仓后实际杠杆是否为10x
+        verify_data = api_request('GET', '/api/v2/mix/position/single-position',
+                                 params={'symbol': symbol, 'productType': 'USDT-FUTURES', 'marginCoin': 'USDT'})
+        verify_list = verify_data if isinstance(verify_data, list) else (verify_data.get('data', []) if isinstance(verify_data, dict) else [])
+        for p in verify_list:
+            if float(p.get('total', 0)) > 0:
+                actual_lev = int(p.get('leverage', 0))
+                if actual_lev != LEVERAGE:
+                    logger(f"  ⚠️ 杠杆异常: 预期{LEVERAGE}x 实际{actual_lev}x，立即平仓")
+                    # 市价平掉
+                    close_path = '/api/v2/mix/order/place-order'
+                    close_body = {
+                        'symbol': symbol,
+                        'productType': 'USDT-FUTURES',
+                        'marginCoin': 'USDT',
+                        'marginMode': MARGIN_MODE,
+                        'side': 'sell' if side == 'buy' else 'buy',
+                        'posSide': 'long' if side == 'buy' else 'short',
+                        'tradeSide': 'close',
+                        'orderType': 'market',
+                        'size': str(size),
+                    }
+                    api_request('POST', close_path, body=close_body)
+                    return None
+                break
         logger(f"  ✅ 开仓成功: {symbol} {side} {size} @市价")
         return order_id
     else:
@@ -508,8 +462,24 @@ def is_in_cooldown(symbol: str) -> bool:
     db = load_pos_db()
     cooldowns = db.get('cooldowns', {})
     last_time = cooldowns.get(symbol, 0)
-    if time.time() - last_time < 300:  # 5分钟冷却
+    if time.time() - last_time < 600:
         return True
+    
+    # 也检查cooldown_log.json（trailing_stop_v2写入的冷却记录）
+    cooldown_log_file = '/root/.openclaw/workspace/cooldown_log.json'
+    if os.path.exists(cooldown_log_file):
+        with open(cooldown_log_file, 'r') as f:
+            log = json.load(f)
+        if symbol in log:
+            elapsed = time.time() - log[symbol].get('timestamp', 0)
+            if elapsed < 600:
+                return True
+            else:
+                # 冷却已过期，清理
+                del log[symbol]
+                with open(cooldown_log_file, 'w') as f:
+                    json.dump(log, f, indent=2)
+    
     return False
 
 def set_cooldown(symbol: str):
@@ -521,7 +491,7 @@ def set_cooldown(symbol: str):
 
 # ========== 交易扫描（每30秒）==========
 def scan_and_trade():
-    """扫描热点库代币，检查信号，开仓"""
+    """扫描热点库代币，只要入库就双向开仓（多+空同时开）"""
     hot = load_hot_db()
     if not hot:
         return
@@ -531,63 +501,71 @@ def scan_and_trade():
 
     for coin in hot:
         symbol = coin['symbol']
-        change24h = coin['change24h']
+
+        # 检查是否已有该币任意方向持仓（DB2或API有持仓都不新开仓）
+        has_existing = False
+        if os.path.exists(DB_V2):
+            with open(DB_V2, 'r') as f:
+                v2 = json.load(f)
+            for key in v2.get('positions', {}):
+                if key.startswith(symbol + '_'):
+                    logger(f"  ⏭ {symbol} 数据库2号已有仓位，跳过")
+                    has_existing = True
+                    break
+
+        if not has_existing:
+            pos_data = api_request('GET', '/api/v2/mix/position/single-position',
+                                   params={'symbol': symbol, 'productType': 'USDT-FUTURES', 'marginCoin': 'USDT'})
+            pos_list = pos_data if isinstance(pos_data, list) else pos_data.get('data', []) if isinstance(pos_data, dict) else []
+            if any(float(p.get('total', 0)) > 0 for p in pos_list):
+                logger(f"  ⏭ {symbol} API已有仓位，跳过")
+                continue
 
         if is_in_cooldown(symbol):
             continue
 
-        # 检查做多信号
-        long_ok, long_reason = check_signal_long(symbol, change24h)
-        if long_ok:
-            logger(f"✅ {symbol} 做多信号触发!")
-            logger(f"  {long_reason}")
-            # 计算开仓数量
-            price = float(coin.get('last_price', 0))
-            if price <= 0:
-                ticker = api_request('GET', '/api/v2/mix/market/ticker',
-                                     params={'symbol': symbol, 'productType': 'USDT-FUTURES'})
-                if ticker:
-                    price = float(ticker[0].get('lastPr', 0)) if isinstance(ticker, list) else float(ticker.get('lastPr', 0))
-            if price <= 0:
-                logger(f"  ⚠️ 无法获取价格，跳过")
-                continue
-            size = round(POSITION_SIZE / price * LEVERAGE, 4)
-            if size <= 0:
-                continue
-            order_id = open_position(symbol, 'buy', size)
-            if order_id:
-                time.sleep(1)
-                entry_price = get_entry_price(symbol)
-                if entry_price > 0:
-                    place_limit_close(symbol, 'buy', entry_price, size)
-                    set_cooldown(symbol)
+        # 获取价格
+        price = float(coin.get('last_price', 0))
+        if price <= 0:
+            ticker = api_request('GET', '/api/v2/mix/market/ticker',
+                                 params={'symbol': symbol, 'productType': 'USDT-FUTURES'})
+            if ticker:
+                price = float(ticker[0].get('lastPr', 0)) if isinstance(ticker, list) else float(ticker.get('lastPr', 0))
+        if price <= 0:
+            logger(f"  ⚠️ {symbol} 无法获取价格，跳过")
             continue
 
-        # 检查做空信号
-        short_ok, short_reason = check_signal_short(symbol, change24h)
-        if short_ok:
-            logger(f"✅ {symbol} 做空信号触发!")
-            logger(f"  {short_reason}")
-            price = float(coin.get('last_price', 0))
-            if price <= 0:
-                ticker = api_request('GET', '/api/v2/mix/market/ticker',
-                                     params={'symbol': symbol, 'productType': 'USDT-FUTURES'})
-                if ticker:
-                    price = float(ticker[0].get('lastPr', 0)) if isinstance(ticker, list) else float(ticker.get('lastPr', 0))
-            if price <= 0:
-                logger(f"  ⚠️ 无法获取价格，跳过")
-                continue
-            size = round(POSITION_SIZE / price * LEVERAGE, 4)
-            if size <= 0:
-                continue
-            order_id = open_position(symbol, 'sell', size)
-            if order_id:
-                time.sleep(1)
-                entry_price = get_entry_price(symbol)
-                if entry_price > 0:
-                    place_limit_close(symbol, 'sell', entry_price, size)
-                    set_cooldown(symbol)
+        size = round(POSITION_SIZE / price * LEVERAGE, 4)
+        if size <= 0:
             continue
+
+        # 双向开仓：多单+空单同时开
+        logger(f"📊 {symbol} 入库，开仓多空双向")
+
+        # 开多单
+        order_id_long = open_position(symbol, 'buy', size)
+        if order_id_long:
+            time.sleep(1)
+            entry_long = get_entry_price(symbol)
+            if entry_long > 0:
+                place_limit_close(symbol, 'buy', entry_long, size)
+            logger(f"  ✅ 多单开仓成功 size={size}")
+        else:
+            logger(f"  ⚠️ 多单开仓失败")
+
+        # 开空单
+        order_id_short = open_position(symbol, 'sell', size)
+        if order_id_short:
+            time.sleep(1)
+            entry_short = get_entry_price(symbol)
+            if entry_short > 0:
+                place_limit_close(symbol, 'sell', entry_short, size)
+            logger(f"  ✅ 空单开仓成功 size={size}")
+        else:
+            logger(f"  ⚠️ 空单开仓失败")
+
+        set_cooldown(symbol)
+
 
 # ========== 主循环 ==========
 def main():
