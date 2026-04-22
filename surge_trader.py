@@ -527,42 +527,32 @@ def scan_and_trade():
         if size <= 0:
             continue
 
-        # 检查做多/做空信号
-        signal_long, long_msg = check_signal_long(symbol, coin.get('change24h', 0))
-        signal_short, short_msg = check_signal_short(symbol, coin.get('change24h', 0))
-        logger(f"  🔍 {long_msg} | {short_msg}")
+        # 双向开仓：多单+空单同时开（无条件）
+        logger(f"📊 {symbol} 入库，开仓多空双向")
 
-        opened = False
-        # 动量未衰竭 → 开多
-        if signal_long:
-            logger(f"  📊 {symbol} 动量未衰竭，开多单")
-            order_id = open_position(symbol, 'buy', size)
-            if order_id:
-                time.sleep(1)
-                entry = get_entry_price(symbol)
-                if entry > 0:
-                    place_limit_close(symbol, 'buy', entry, size)
-                logger(f"  ✅ 多单开仓成功 size={size}")
-            else:
-                logger(f"  ⚠️ 多单开仓失败")
-            opened = True
+        # 开多单
+        order_id_long = open_position(symbol, 'buy', size)
+        if order_id_long:
+            time.sleep(1)
+            entry_long = get_entry_price(symbol)
+            if entry_long > 0:
+                place_limit_close(symbol, 'buy', entry_long, size)
+            logger(f"  ✅ 多单开仓成功 size={size}")
+        else:
+            logger(f"  ⚠️ 多单开仓失败")
 
-        # 动量衰竭 → 开空
-        if signal_short:
-            logger(f"  📊 {symbol} 动量衰竭，开空单")
-            order_id = open_position(symbol, 'sell', size)
-            if order_id:
-                time.sleep(1)
-                entry = get_entry_price(symbol)
-                if entry > 0:
-                    place_limit_close(symbol, 'sell', entry, size)
-                logger(f"  ✅ 空单开仓成功 size={size}")
-            else:
-                logger(f"  ⚠️ 空单开仓失败")
-            opened = True
+        # 开空单
+        order_id_short = open_position(symbol, 'sell', size)
+        if order_id_short:
+            time.sleep(1)
+            entry_short = get_entry_price(symbol)
+            if entry_short > 0:
+                place_limit_close(symbol, 'sell', entry_short, size)
+            logger(f"  ✅ 空单开仓成功 size={size}")
+        else:
+            logger(f"  ⚠️ 空单开仓失败")
 
-        if opened:
-            set_cooldown(symbol)
+        set_cooldown(symbol)
 
 
 # ========== 主循环 ==========
