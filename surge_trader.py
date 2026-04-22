@@ -33,7 +33,7 @@ API_PASSPHRASE = 'liugang123'
 BASE_URL = 'https://api.bitget.com'
 
 # ========== 热点库参数 ==========
-HOT_SCAN_INTERVAL = 300          # 5分钟扫描热点库
+HOT_SCAN_INTERVAL = 300          # 5分钟扫描热点库（改为每5分钟）
 GAIN_THRESHOLD = 0.20           # 入库：日涨幅>20%
 REMOVE_THRESHOLD = 0.10         # 出库：日涨幅<10%
 MAX_HOT_SIZE = 10               # 热点库上限
@@ -495,7 +495,12 @@ def scan_and_trade():
         if is_in_cooldown(symbol):
             continue  # 跳过这个币，继续下一个
 
-        # 获取价格
+        # Check if coin has at least 5 days of K-line data (not new coin)
+        if not is_coin_old_enough(symbol, min_days=5):
+            logger(f"  ⚠️ {symbol} coin listing <5 days, skip")
+            continue
+
+        # Get price
         price = float(coin.get('last_price', 0))
         if price <= 0:
             ticker = api_request('GET', '/api/v2/mix/market/ticker',
@@ -503,7 +508,7 @@ def scan_and_trade():
             if ticker:
                 price = float(ticker[0].get('lastPr', 0)) if isinstance(ticker, list) else float(ticker.get('lastPr', 0))
         if price <= 0:
-            logger(f"  ⚠️ {symbol} 无法获取价格，跳过")
+            logger(f"  ⚠️ {symbol} cannot get price, skip")
             continue
 
         size = round(POSITION_SIZE / price * LEVERAGE, 4)
