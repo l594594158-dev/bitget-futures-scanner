@@ -223,11 +223,15 @@ def load_hot_db():
     if not os.path.exists(DB_HOT):
         return []
     with open(DB_HOT, 'r') as f:
-        return json.load(f)
+        data = json.load(f)
+        if isinstance(data, list):
+            return data
+        return data.get('contracts', [])
 
 def save_hot_db(coins):
+    # 保存为 {"contracts": [...]} 格式
     with open(DB_HOT, 'w') as f:
-        json.dump(coins, f, ensure_ascii=False, indent=2)
+        json.dump({'contracts': coins, 'last_updated': datetime.now().strftime('%Y-%m-%d %H:%M:%S')}, f, ensure_ascii=False, indent=2)
 
 def load_pos_db():
     if not os.path.exists(DB_POS):
@@ -252,6 +256,15 @@ def scan_hot_contracts():
         logger("获取行情失败")
         return
 
+    # 载入已有热点库（保留入场时间）
+    existing = {}
+    if os.path.exists(DB_HOT):
+        with open(DB_HOT, 'r') as f:
+            old_data = json.load(f)
+            items = old_data if isinstance(old_data, list) else old_data.get('contracts', [])
+            for c in items:
+                existing[c['symbol']] = c
+
     hot = []
     for t in tickers:
         try:
@@ -260,12 +273,17 @@ def scan_hot_contracts():
             if not symbol:
                 continue
             if change >= GAIN_THRESHOLD:
+                # 已有代币保留enter_time，新代币记录入场时间
+                if symbol in existing:
+                    enter_time = existing[symbol].get('enter_time', datetime.now().strftime('%Y-%m-%d %H:%M:%S'))
+                else:
+                    enter_time = datetime.now().strftime('%Y-%m-%d %H:%M:%S')
                 hot.append({
                     'symbol': symbol,
                     'change24h': change,
                     'last_price': t.get('lastPr', '0'),
                     'volume': t.get('volume24h', '0'),
-                    'update_time': datetime.now().strftime('%Y-%m-%d %H:%M:%S'),
+                    'enter_time': enter_time,
                 })
         except:
             continue
@@ -280,8 +298,11 @@ def scan_hot_contracts():
     # 截取前10个
     hot = hot[:MAX_HOT_SIZE]
 
-    # 移除低于10%的
+    # 移除：涨幅<10% 或 入库<5日
+    import time as time_module
+    now_ts = time_module.time()
     hot = [h for h in hot if h['change24h'] >= REMOVE_THRESHOLD]
+    hot = [h for h in hot if (now_ts - datetime.strptime(h['enter_time'], '%Y-%m-%d %H:%M:%S').timestamp()) >= 5 * 86400]
 
     save_hot_db(hot)
     logger(f"热点库更新: {len(hot)}个代币")
