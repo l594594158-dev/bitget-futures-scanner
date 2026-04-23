@@ -1083,3 +1083,74 @@ body = {
 | 平仓限价止损单 | ✅ 成功 |
 | 市价平仓（close-positions）| ✅ 成功 |
 | 移动止盈脚本市价平仓 | ✅ 成功 |
+
+---
+## Bitget K线接口参数名修复（2026-04-22 01:48）
+
+### 问题描述
+- `/api/v2/mix/market/candles` 接口返回 `400172 Parameter verification failed`
+- 所有热点代币的技术指标（RSI/ADX/布林带）无法计算
+- 信号检测功能完全失效
+
+### 根本原因
+**参数名错误：**
+
+| 错误参数 | 正确参数 |
+|---------|---------|
+| `period=5m` | `granularity=5m` |
+
+Bitget v2 API 的 candles 接口使用 `granularity` 作为周期参数，而非 `period`。
+
+ticker 接口使用 `productType`，但 candles 接口使用 `granularity`，参数命名不一致。
+
+### 修复内容
+
+#### surge_trader.py
+
+```python
+# 修复前（错误）：
+data = api_request('GET', '/api/v2/mix/market/candles',
+                   params={'symbol': symbol, 'productType': 'USDT-FUTURES', 
+                           'period': period, 'limit': limit})
+
+# 修复后（正确）：
+data = api_request('GET', '/api/v2/mix/market/candles',
+                   params={'symbol': symbol, 'productType': 'USDT-FUTURES', 
+                           'granularity': period, 'limit': limit})
+```
+
+### 影响范围
+
+| 功能 | 状态 |
+|------|------|
+| 热点库扫描 | ✅ 正常（使用ticker接口）|
+| K线数据获取 | ✅ 已修复（使用granularity参数）|
+| RSI计算 | ✅ 正常 |
+| 布林带计算 | ✅ 正常 |
+| ADX计算 | ✅ 正常 |
+| 信号检测 | ✅ 正常 |
+
+### 验证结果
+
+修复后成功获取9个热点代币的技术指标数据：
+- RAVEUSDT: BB=1.6% ADX=68 RSI=47
+- UAIUSDT: BB=0.7% ADX=29 RSI=51
+- DENTUSDT: BB=0.2% ADX=18 RSI=46
+- GWEIUSDT: BB=1.9% ADX=83 RSI=67
+- NAORISUSDT: BB=3.6% ADX=86 RSI=80
+- BEATUSDT: BB=0.6% ADX=50 RSI=60
+- BASUSDT: BB=2.4% ADX=87 RSI=91
+- CLOUSDT: BB=1.5% ADX=30 RSI=40
+- EULUSDT: BB=1.2% ADX=12 RSI=52
+
+### 其他可用替代接口（供参考）
+
+| 接口 | 参数要求 | 状态 |
+|------|---------|------|
+| `/api/v2/mix/market/tickers` | productType=USDT-FUTURES | ✅ 正常 |
+| `/api/v2/mix/market/fills` | symbol + productType | ✅ 正常 |
+| `/api/v2/mix/market/candles` | **granularity** + symbol + productType | ✅ 已修复 |
+| `/api/v2/mix/market/orderbook` | 需要调整 | 待测 |
+
+### 附：granularity 可用值
+`1m` / `5m` / `15m` / `1h` / `4h` / `1d`

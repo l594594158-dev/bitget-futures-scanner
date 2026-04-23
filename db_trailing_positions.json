@@ -1,0 +1,53 @@
+{
+  "positions": {
+    "HUMAUSDT_long": {
+      "symbol": "HUMAUSDT",
+      "direction": "long",
+      "side": "buy",
+      "entry_price": 0.025,
+      "current_price": 0.02634,
+      "size": 799.0,
+      "leverage": 10,
+      "peak_price": 0.0266,
+      "trail_triggered": true,
+      "trail_activated_price": 0.02626,
+      "pnl": 5.35999999999999,
+      "unrealized_pl": 1.07865,
+      "liquidation_price": 0.023092436885,
+      "last_updated": "2026-04-23 21:41:31"
+    },
+    "BASEDUSDT_short": {
+      "symbol": "BASEDUSDT",
+      "direction": "short",
+      "side": "sell",
+      "entry_price": 0.136223972602,
+      "current_price": 0.1336,
+      "size": 146.0,
+      "leverage": 10,
+      "peak_price": 0.1336,
+      "trail_triggered": false,
+      "trail_activated_price": null,
+      "pnl": 1.9262194104897827,
+      "unrealized_pl": 0.339299999892,
+      "liquidation_price": 0.148274658482,
+      "last_updated": "2026-04-23 21:41:26"
+    },
+    "BSBUSDT_long": {
+      "symbol": "BSBUSDT",
+      "direction": "long",
+      "side": "buy",
+      "entry_price": 0.39796,
+      "current_price": 0.42742,
+      "size": 51.0,
+      "leverage": 10,
+      "peak_price": 0.4287,
+      "trail_triggered": true,
+      "trail_activated_price": 0.41912,
+      "pnl": 7.402754045632738,
+      "unrealized_pl": 1.50246,
+      "liquidation_price": 0.367573891626,
+      "last_updated": "2026-04-23 21:41:31"
+    }
+  },
+  "last_updated": "2026-04-23 21:41:31"
+}

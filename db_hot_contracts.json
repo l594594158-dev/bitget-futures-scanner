@@ -1,47 +1,145 @@
 {
   "contracts": [
     {
-      "symbol": "CHIPUSDT",
-      "change24h": 0.72108,
-      "last_price": "0.0991",
+      "symbol": "SPKUSDT",
+      "change24h": 0.61056,
+      "last_price": "0.05339",
       "volume": "0",
-      "enter_time": "2026-04-16 20:16:39"
+      "enter_time": "2026-04-17 14:33:16"
+    },
+    {
+      "symbol": "BSBUSDT",
+      "change24h": 0.42969,
+      "last_price": "0.42619",
+      "volume": "0",
+      "enter_time": "2026-04-17 14:58:17"
     },
     {
       "symbol": "TACUSDT",
-      "change24h": 0.30411,
-      "last_price": "0.0072",
+      "change24h": 0.37633,
+      "last_price": "0.008803",
       "volume": "0",
-      "enter_time": "2026-04-16 20:16:39"
+      "enter_time": "2026-04-17 14:33:16"
     },
     {
-      "symbol": "METUSDT",
-      "change24h": 0.29215,
-      "last_price": "0.1893",
+      "symbol": "MAGMAUSDT",
+      "change24h": 0.37202,
+      "last_price": "0.19709",
       "volume": "0",
-      "enter_time": "2026-04-16 20:16:39"
+      "enter_time": "2026-04-17 14:33:16"
+    },
+    {
+      "symbol": "BASUSDT",
+      "change24h": 0.33825,
+      "last_price": "0.015521",
+      "volume": "0",
+      "enter_time": "2026-04-17 17:43:26"
+    },
+    {
+      "symbol": "MOVRUSDT",
+      "change24h": 0.31012,
+      "last_price": "2.239",
+      "volume": "0",
+      "enter_time": "2026-04-17 21:13:37"
+    },
+    {
+      "symbol": "OPGUSDT",
+      "change24h": 0.25799,
+      "last_price": "0.4052",
+      "volume": "0",
+      "enter_time": "2026-04-17 14:43:17"
+    },
+    {
+      "symbol": "GENIUSUSDT",
+      "change24h": 0.20047,
+      "last_price": "0.72589",
+      "volume": "0",
+      "enter_time": "2026-04-17 15:13:18"
+    },
+    {
+      "symbol": "LABUSDT",
+      "change24h": 0.19702,
+      "last_price": "0.65835",
+      "volume": "0",
+      "enter_time": "2026-04-17 18:48:29"
+    },
+    {
+      "symbol": "KATUSDT",
+      "change24h": 0.19691,
+      "last_price": "0.01161",
+      "volume": "0",
+      "enter_time": "2026-04-17 19:08:30"
+    },
+    {
+      "symbol": "DEXEUSDT",
+      "change24h": 0.17324,
+      "last_price": "14.31",
+      "volume": "0",
+      "enter_time": "2026-04-17 20:48:35"
+    },
+    {
+      "symbol": "HUMAUSDT",
+      "change24h": 0.17194,
+      "last_price": "0.02631",
+      "volume": "0",
+      "enter_time": "2026-04-17 14:33:16"
+    },
+    {
+      "symbol": "1000RATSUSDT",
+      "change24h": 0.17162,
+      "last_price": "0.04451",
+      "volume": "0",
+      "enter_time": "2026-04-17 21:38:38"
+    },
+    {
+      "symbol": "BBUSDT",
+      "change24h": 0.1668,
+      "last_price": "0.02945",
+      "volume": "0",
+      "enter_time": "2026-04-17 15:38:19"
     },
     {
       "symbol": "HUSDT",
-      "change24h": 0.22123,
-      "last_price": "0.12564",
+      "change24h": 0.16129,
+      "last_price": "0.13572",
       "volume": "0",
-      "enter_time": "2026-04-16 20:16:39"
+      "enter_time": "2026-04-17 20:18:34"
     },
     {
-      "symbol": "SPKUSDT",
-      "change24h": 0.2124,
-      "last_price": "0.03128",
+      "symbol": "BASEDUSDT",
+      "change24h": 0.14431,
+      "last_price": "0.1348",
       "volume": "0",
-      "enter_time": "2026-04-16 20:16:39"
+      "enter_time": "2026-04-17 21:13:37"
     },
     {
-      "symbol": "TRIAUSDT",
-      "change24h": 0.2081,
-      "last_price": "0.033398",
+      "symbol": "BIOUSDT",
+      "change24h": 0.12911,
+      "last_price": "0.03227",
       "volume": "0",
-      "enter_time": "2026-04-16 20:16:39"
+      "enter_time": "2026-04-17 20:58:36"
+    },
+    {
+      "symbol": "USUSDT",
+      "change24h": 0.11796,
+      "last_price": "0.004644",
+      "volume": "0",
+      "enter_time": "2026-04-17 20:48:35"
+    },
+    {
+      "symbol": "LYNUSDT",
+      "change24h": 0.10911,
+      "last_price": "0.0616",
+      "volume": "0",
+      "enter_time": "2026-04-17 21:28:37"
+    },
+    {
+      "symbol": "VELVETUSDT",
+      "change24h": 0.10224,
+      "last_price": "0.09703",
+      "volume": "0",
+      "enter_time": "2026-04-17 21:38:38"
     }
   ],
-  "last_updated": "2026-04-22 20:16:44"
+  "last_updated": "2026-04-23 21:38:38"
 }

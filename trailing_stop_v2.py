@@ -1,7 +1,7 @@
 #!/usr/bin/env python3
 """
 移动止盈脚本 v2
-- 数据库: db_positions_v2.json
+- 数据库: db_trailing_positions.json (与futures_trader分离)
 - 扫描间隔: 5秒
 - 移动止盈: 盈利>8%激活，峰值回撤4%止盈
 """
@@ -19,7 +19,8 @@ from datetime import datetime
 
 # ========== 配置 ==========
 WORKSPACE = '/root/.openclaw/workspace'
-DB_FILE = f'{WORKSPACE}/db_positions_v2.json'
+DB_FILE = f'{WORKSPACE}/db_trailing_positions.json'
+COOLDOWN_LOG = f'{WORKSPACE}/cooldown_log.json'  # 平仓冷却记录
 PID_FILE = f'{WORKSPACE}/trailing_stop_v2.pid'
 LOG_FILE = f'{WORKSPACE}/trailing_stop_v2.log'
 
@@ -30,9 +31,9 @@ API_PASSPHRASE = 'liugang123'
 BASE_URL = 'https://api.bitget.com'
 
 # 交易参数
-TRAIL_TRIGGER_PCT = 0.08    # 盈利>8%激活
-TRAIL_EXIT_PCT = 0.04       # 距离峰值4%止盈
-FIXED_STOP_PCT = 0.09       # 固定止损-9%
+TRAIL_TRIGGER_PCT = 0.05    # 盈利>5%激活
+TRAIL_EXIT_PCT = 0.03       # 距离峰值3%止盈
+# 固定止损已删除
 SCAN_INTERVAL = 5            # 扫描间隔5秒
 SYNC_INTERVAL = 30           # 从db_positions.json同步间隔30秒
 PRODUCT_TYPE = 'USDT-FUTURES'
@@ -139,6 +140,52 @@ def save_db(db: dict):
     db['last_updated'] = datetime.now().strftime('%Y-%m-%d %H:%M:%S')
     with open(DB_FILE, 'w') as f:
         json.dump(db, f, indent=2, ensure_ascii=False)
+
+COOLDOWN_SEC = 600  # 平仓后冷却600秒
+
+def load_cooldown_log():
+    """加载冷却日志"""
+    if os.path.exists(COOLDOWN_LOG):
+        with open(COOLDOWN_LOG, 'r') as f:
+            return json.load(f)
+    return {}
+
+def save_cooldown_log(log: dict):
+    """保存冷却日志"""
+    with open(COOLDOWN_LOG, 'w') as f:
+        json.dump(log, f, indent=2, ensure_ascii=False)
+
+def add_cooldown(symbol: str, reason: str, entry_price: float, exit_price: float, pnl: float):
+    """添加冷却记录"""
+    log = load_cooldown_log()
+    now = time.time()
+    log[symbol] = {
+        'closed_at': datetime.now().strftime('%Y-%m-%d %H:%M:%S'),
+        'timestamp': now,
+        'reason': reason,
+        'entry_price': entry_price,
+        'exit_price': exit_price,
+        'pnl': pnl
+    }
+    save_cooldown_log(log)
+    logger(f"🔒 {symbol} 进入冷却：{reason}，{COOLDOWN_SEC}秒后清除")
+
+def get_active_cooldowns():
+    """获取仍在冷却中的代币"""
+    log = load_cooldown_log()
+    now = time.time()
+    active = {}
+    for sym, info in list(log.items()):
+        elapsed = now - info['timestamp']
+        if elapsed < COOLDOWN_SEC:
+            remaining = COOLDOWN_SEC - elapsed
+            active[sym] = remaining
+        else:
+            # 超过冷却时间，删除
+            del log[sym]
+            logger(f"🔓 {sym} 冷却结束，已清除")
+    save_cooldown_log(log)
+    return active
 
 def init_db():
     """初始化数据库2"""
@@ -324,7 +371,7 @@ def monitor_loop():
     """主监控循环"""
     logger("=" * 50)
     logger("移动止盈v2启动")
-    logger(f"参数: 激活>{TRAIL_TRIGGER_PCT*100}% | 回撤>{TRAIL_EXIT_PCT*100}% | 固定止损>{FIXED_STOP_PCT*100}% | 间隔{SCAN_INTERVAL}秒")
+    logger(f"参数: 激活>{TRAIL_TRIGGER_PCT*100}% | 回撤>{TRAIL_EXIT_PCT*100}% 间隔{SCAN_INTERVAL}秒")
     logger("=" * 50)
     
     db = init_db()
@@ -404,6 +451,15 @@ def monitor_loop():
                     
                     # 执行平仓
                     if close_position(symbol, direction, size):
+                        # 计算平仓盈亏
+                        if direction == 'long':
+                            realized_pnl = (exit_price - entry_price) / entry_price * 100
+                        else:
+                            realized_pnl = (entry_price - exit_price) / entry_price * 100
+                        
+                        # 添加冷却记录（写到cooldown_log.json）
+                        add_cooldown(symbol, exit_reason, entry_price, exit_price, realized_pnl)
+                        
                         # 清空该币种记录（用symbol_direction作为key）
                         db = load_db()
                         pos_key = f"{symbol}_{direction}"

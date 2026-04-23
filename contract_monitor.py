@@ -16,15 +16,15 @@ import hashlib
 import base64
 import requests
 import argparse
-from datetime import datetime
+from datetime import datetime, timedelta
 
 # ========== 配置 ==========
 WORKSPACE = '/root/.openclaw/workspace'
 DB_HOT = f'{WORKSPACE}/db_hot_contracts.json'    # 数据库1号：热点库
 DB_POS = f'{WORKSPACE}/db_positions.json'         # 数据库1号：持仓记录
 DB_V2 = f'{WORKSPACE}/db_positions_v2.json'       # 数据库2号：真实持仓（与Bitget同步）
-PID_FILE = f'{WORKSPACE}/surge_trader.pid'
-LOG_FILE = f'{WORKSPACE}/surge_trader.log'
+PID_FILE = f'{WORKSPACE}/contract_monitor.pid'
+LOG_FILE = f'{WORKSPACE}/contract_monitor.log'
 
 # API配置
 API_KEY = 'bg_55d7ddd792c3ebab233b4a6911f95f99'
@@ -33,10 +33,11 @@ API_PASSPHRASE = 'liugang123'
 BASE_URL = 'https://api.bitget.com'
 
 # ========== 热点库参数 ==========
-HOT_SCAN_INTERVAL = 300          # 5分钟扫描热点库（改为每5分钟）
-GAIN_THRESHOLD = 0.20           # 入库：日涨幅>20%
-REMOVE_THRESHOLD = 0.10         # 出库：日涨幅<10%
-MAX_HOT_SIZE = 10               # 热点库上限
+HOT_SCAN_INTERVAL = 300          # 5分钟扫描热点库
+GAIN_THRESHOLD = 0.10           # 入库：日涨幅>10%
+REMOVE_THRESHOLD = 0.05         # 出库：日涨幅<5%
+MAX_HOT_SIZE = 20               # 热点库上限
+MAX_POSITIONS = 40              # 持仓上限（双向持仓分开计算）
 
 # ========== 交易扫描参数 ==========
 TRADE_SCAN_INTERVAL = 30        # 30秒扫描交易信号
@@ -275,9 +276,9 @@ def scan_hot_contracts():
             if change >= GAIN_THRESHOLD:
                 # 已有代币保留enter_time，新代币记录入场时间
                 if symbol in existing:
-                    enter_time = existing[symbol].get('enter_time', datetime.now().strftime('%Y-%m-%d %H:%M:%S'))
+                    enter_time = existing[symbol].get('enter_time', (datetime.now() - timedelta(days=6)).strftime('%Y-%m-%d %H:%M:%S'))
                 else:
-                    enter_time = datetime.now().strftime('%Y-%m-%d %H:%M:%S')
+                    enter_time = (datetime.now() - timedelta(days=6)).strftime('%Y-%m-%d %H:%M:%S')
                 hot.append({
                     'symbol': symbol,
                     'change24h': change,
@@ -295,14 +296,11 @@ def scan_hot_contracts():
     # 按涨幅排序
     hot.sort(key=lambda x: x['change24h'], reverse=True)
 
-    # 截取前10个
+        # 截取前MAX_HOT_SIZE个
     hot = hot[:MAX_HOT_SIZE]
 
-    # 移除：涨幅<10% 或 入库<5日
-    import time as time_module
-    now_ts = time_module.time()
+    # 移除：涨幅<REMOVE_THRESHOLD
     hot = [h for h in hot if h['change24h'] >= REMOVE_THRESHOLD]
-    hot = [h for h in hot if (now_ts - datetime.strptime(h['enter_time'], '%Y-%m-%d %H:%M:%S').timestamp()) >= 5 * 86400]
 
     save_hot_db(hot)
     logger(f"热点库更新: {len(hot)}个代币")
@@ -462,80 +460,10 @@ def set_cooldown(symbol: str):
     db['cooldowns'][symbol] = time.time()
     save_pos_db(db)
 
-# ========== 交易扫描（每30秒）==========
+# ========== 交易扫描（已禁用）==========
 def scan_and_trade():
-    """扫描热点库代币，只要入库就双向开仓（多+空同时开）"""
-    hot = load_hot_db()
-    if not hot:
-        return
-
-    logger("=" * 50)
-    logger(f"开始交易扫描（{len(hot)}个热点代币）...")
-
-    for coin in hot:
-        symbol = coin['symbol']
-
-        # 检查是否已有该币任意方向持仓（DB2或API有持仓都不新开仓）
-        if os.path.exists(DB_V2):
-            with open(DB_V2, 'r') as f:
-                v2 = json.load(f)
-            for key in v2.get('positions', {}):
-                if key.startswith(symbol + '_'):
-                    logger(f"  ⏭ {symbol} 数据库2号已有仓位，跳过")
-                    continue  # 跳过这个币，继续下一个
-
-        # API检查持仓（仅当DB2无持仓时）
-        pos_data = api_request('GET', '/api/v2/mix/position/single-position',
-                               params={'symbol': symbol, 'productType': 'USDT-FUTURES', 'marginCoin': 'USDT'})
-        pos_list = pos_data if isinstance(pos_data, list) else pos_data.get('data', []) if isinstance(pos_data, dict) else []
-        if any(float(p.get('total', 0)) > 0 for p in pos_list):
-            logger(f"  ⏭ {symbol} API已有仓位，跳过")
-            continue  # 跳过这个币，继续下一个
-
-        if is_in_cooldown(symbol):
-            continue  # 跳过这个币，继续下一个
-
-        # Get price
-        price = float(coin.get('last_price', 0))
-        if price <= 0:
-            ticker = api_request('GET', '/api/v2/mix/market/ticker',
-                                 params={'symbol': symbol, 'productType': 'USDT-FUTURES'})
-            if ticker:
-                price = float(ticker[0].get('lastPr', 0)) if isinstance(ticker, list) else float(ticker.get('lastPr', 0))
-        if price <= 0:
-            logger(f"  ⚠️ {symbol} cannot get price, skip")
-            continue
-
-        size = round(POSITION_SIZE / price * LEVERAGE, 4)
-        if size <= 0:
-            continue
-
-        # 双向开仓：多单+空单同时开（无条件）
-        logger(f"📊 {symbol} 入库，开仓多空双向")
-
-        # 开多单
-        order_id_long = open_position(symbol, 'buy', size)
-        if order_id_long:
-            time.sleep(1)
-            entry_long = get_entry_price(symbol)
-            if entry_long > 0:
-                place_limit_close(symbol, 'buy', entry_long, size)
-            logger(f"  ✅ 多单开仓成功 size={size}")
-        else:
-            logger(f"  ⚠️ 多单开仓失败")
-
-        # 开空单
-        order_id_short = open_position(symbol, 'sell', size)
-        if order_id_short:
-            time.sleep(1)
-            entry_short = get_entry_price(symbol)
-            if entry_short > 0:
-                place_limit_close(symbol, 'sell', entry_short, size)
-            logger(f"  ✅ 空单开仓成功 size={size}")
-        else:
-            logger(f"  ⚠️ 空单开仓失败")
-
-        set_cooldown(symbol)
+    """交易扫描已禁用，等待新策略"""
+    return
 
 
 # ========== 主循环 ==========
@@ -550,7 +478,7 @@ def main():
             f.write(str(pid))
 
         logger("=" * 50)
-        logger("极端行情交易机器人启动")
+        logger("合约监控任务启动")
         logger(f"热点库: 每{HOT_SCAN_INTERVAL}秒扫描")
         logger(f"交易扫描: 每{TRADE_SCAN_INTERVAL}秒")
         logger("做多: 15m动量未衰竭")
