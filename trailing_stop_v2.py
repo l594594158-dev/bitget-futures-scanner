@@ -141,7 +141,7 @@ def save_db(db: dict):
     with open(DB_FILE, 'w') as f:
         json.dump(db, f, indent=2, ensure_ascii=False)
 
-COOLDOWN_SEC = 600  # 平仓后冷却600秒
+COOLDOWN_SEC = 900  # 平仓后冷却900秒（15分钟）
 
 def _load_cooldown_db():
     """加载含冷却的共享数据库（与futures_trader共用db_positions_v2.json）"""

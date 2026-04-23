@@ -57,7 +57,7 @@ SHORT_GAIN_PCT = 0.05          # 30min-2h涨幅 ≥ 5%
 SHORT_RSI_MIN = 80             # RSI ≥ 80
 
 # ========== 冷却 ==========
-COOLDOWN_SEC = 600             # 同一标的冷却10分钟
+COOLDOWN_SEC = 900             # 同一标的冷却15分钟
 
 # ========== API工具 ==========
 def sign(message: str, secret: str) -> str:
@@ -314,7 +314,9 @@ def open_position(symbol: str, side: str, size: float) -> bool:
         'size': str(size),
     }
     res = api_request('POST', '/api/v2/mix/order/place-order', body=order_body)
-    if res and (res.get('code') == '00000' or res.get('code') == '0'):
+    # 有orderId即表示交易所已接受订单（开仓成功）
+    # 部分响应有code=00000，部分只有orderId无code，都算成功
+    if res and (res.get('code') in ('00000', '0') or 'orderId' in res or 'orderId' in res.get('data', {})):
         order_id = res.get('data', {}).get('orderId', '')
         logger(f"  ✅ 开仓成功: {symbol} {side} {size}")
         return True
