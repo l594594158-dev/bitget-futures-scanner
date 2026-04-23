@@ -364,7 +364,7 @@ def eval_coin(symbol: str):
     开空条件：
     1. 30分钟-2小时涨幅 ≥ 5%
     2. 1h RSI ≥ 80（RSI参数14，80以上极端超买区域）
-    3. 价格创新高但MACD不创新高（MACD参数12,26,9；顶背离确认）
+    3. 价格接近前高（收盘价在30日高点5%以内）
     4. 成交量开始萎缩（急涨时成交量为峰值，后续3根1h K线成交量递减）
     5. 跌破4h EMA20（收盘价穿过才生效，非影线瞬间刺穿）
 
@@ -428,15 +428,8 @@ def eval_coin(symbol: str):
     macd_line, signal_line, hist = compute_macd(closes_1h_for_macd,
                                                   MACD_FAST, MACD_SLOW, MACD_SIGNAL)
 
-    # ===== 顶背离检查：价格创新高 vs MACD不创新高（30天内）=====
-    price_new_high = current_price > daily_high
-    macd_30d_high = None
-    macd_not_new_high = False
-    if macd_line and len(macd_line) >= HIGH_LOOKBACK:
-        macd_30d_vals = macd_line[:HIGH_LOOKBACK]
-        macd_30d_high = max(macd_30d_vals) if macd_30d_vals else 0
-        macd_not_new_high = (macd_30d_high > 0 and
-                             macd_line[-1] < macd_30d_high)
+    # ===== 价格接近前高检查：收盘价在30日高点5%以内 =====
+    price_near_high = daily_high > 0 and current_price >= daily_high * 0.95
 
     # ===== 空头条件4：成交量萎缩 =====
     # 急涨时成交量为峰值（spike_vol_peak），后续3根1h K线成交量逐根递减
@@ -477,7 +470,7 @@ def eval_coin(symbol: str):
     short_ok = (
         gain_pct >= SHORT_GAIN_PCT and
         rsi_1h is not None and rsi_1h >= SHORT_RSI_MIN and
-        macd_not_new_high and
+        price_near_high and
         vol_declining and
         ema20_4h is not None and current_price < ema20_4h
     )
@@ -487,14 +480,14 @@ def eval_coin(symbol: str):
         logger(f"  ⚠️ {symbol} 多空信号同时满足，优先做空")
         return 'short'
     if short_ok:
-        logger(f"  📊 {symbol} 开空信号满足 | 涨{gain_pct*100:.1f}% R{rsi_1h:.0f} 顶背{price_new_high and macd_not_new_high} 缩{vol_declining} ema20{ema20_4h and current_price < ema20_4h}")
+        logger(f"  📊 {symbol} 开空信号满足 | 涨{gain_pct*100:.1f}% R{rsi_1h:.0f} 近高{price_near_high} 缩{vol_declining} ema20{ema20_4h and current_price < ema20_4h}")
         return 'short'
     if long_ok:
         logger(f"  📊 {symbol} 开多信号满足 | 涨{gain_pct*100:.1f}% 量{vol_ratio:.1f}x 前高{price_broke_high} R{rsi_1h:.0f} 支撑{pullback_valid}")
         return 'long'
 
     # 调试：打印各条件状态
-    logger(f"  ❌ {symbol} 未达标 | 涨{gain_pct*100:.1f}% 量{vol_ratio:.1f}x R{rsi_1h:.0f} 顶背{price_new_high and macd_not_new_high} 缩{vol_declining} ema20{ema20_4h and current_price < ema20_4h} 支撑{pullback_valid}")
+    logger(f"  ❌ {symbol} 未达标 | 涨{gain_pct*100:.1f}% 量{vol_ratio:.1f}x R{rsi_1h:.0f} 近高{price_near_high} 缩{vol_declining} ema20{ema20_4h and current_price < ema20_4h} 支撑{pullback_valid}")
 
     return None
 
@@ -562,7 +555,7 @@ def main():
         logger(f"扫描频率: 每{TRADE_SCAN_INTERVAL}秒")
         logger(f"保证金: {POSITION_SIZE}U | 杠杆: {LEVERAGE}x | 模式: {MARGIN_MODE}")
         logger("开多: 涨幅≥5% + 量比≥2.5x + RSI(40-70) + 回踩不破支撑")
-        logger("开空: 涨幅≥5% + RSI≥80 + 顶背离 + 缩量 + 跌破4h EMA20")
+        logger("开空: 涨幅≥5% + RSI≥80 + 接近前高 + 缩量 + 跌破4h EMA20")
         logger("=" * 50)
 
         while True:
