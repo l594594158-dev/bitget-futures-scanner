@@ -20,7 +20,7 @@ from datetime import datetime
 # ========== 配置 ==========
 WORKSPACE = '/root/.openclaw/workspace'
 DB_FILE = f'{WORKSPACE}/db_trailing_positions.json'
-COOLDOWN_LOG = f'{WORKSPACE}/cooldown_log.json'  # 平仓冷却记录
+DB_COOLDOWN = f'{WORKSPACE}/db_positions_v2.json'  # 与futures_trader共用冷却文件
 PID_FILE = f'{WORKSPACE}/trailing_stop_v2.pid'
 LOG_FILE = f'{WORKSPACE}/trailing_stop_v2.log'
 
@@ -143,23 +143,26 @@ def save_db(db: dict):
 
 COOLDOWN_SEC = 600  # 平仓后冷却600秒
 
-def load_cooldown_log():
-    """加载冷却日志"""
-    if os.path.exists(COOLDOWN_LOG):
-        with open(COOLDOWN_LOG, 'r') as f:
+def _load_cooldown_db():
+    """加载含冷却的共享数据库（与futures_trader共用db_positions_v2.json）"""
+    if os.path.exists(DB_COOLDOWN):
+        with open(DB_COOLDOWN, 'r') as f:
             return json.load(f)
-    return {}
+    return {'positions': {}, 'cooldowns': {}, 'last_updated': ''}
 
-def save_cooldown_log(log: dict):
-    """保存冷却日志"""
-    with open(COOLDOWN_LOG, 'w') as f:
-        json.dump(log, f, indent=2, ensure_ascii=False)
+def _save_cooldown_db(db):
+    """保存含冷却的共享数据库"""
+    db['last_updated'] = datetime.now().strftime('%Y-%m-%d %H:%M:%S')
+    with open(DB_COOLDOWN, 'w') as f:
+        json.dump(db, f, indent=2, ensure_ascii=False)
 
 def add_cooldown(symbol: str, reason: str, entry_price: float, exit_price: float, pnl: float):
-    """添加冷却记录"""
-    log = load_cooldown_log()
+    """添加冷却记录（写入共享数据库，与futures_trader共用）"""
+    db = _load_cooldown_db()
     now = time.time()
-    log[symbol] = {
+    if 'cooldowns' not in db:
+        db['cooldowns'] = {}
+    db['cooldowns'][symbol] = {
         'closed_at': datetime.now().strftime('%Y-%m-%d %H:%M:%S'),
         'timestamp': now,
         'reason': reason,
@@ -167,24 +170,25 @@ def add_cooldown(symbol: str, reason: str, entry_price: float, exit_price: float
         'exit_price': exit_price,
         'pnl': pnl
     }
-    save_cooldown_log(log)
+    _save_cooldown_db(db)
     logger(f"🔒 {symbol} 进入冷却：{reason}，{COOLDOWN_SEC}秒后清除")
 
 def get_active_cooldowns():
     """获取仍在冷却中的代币"""
-    log = load_cooldown_log()
+    db = _load_cooldown_db()
+    cooldowns = db.get('cooldowns', {})
     now = time.time()
     active = {}
-    for sym, info in list(log.items()):
+    for sym, info in list(cooldowns.items()):
         elapsed = now - info['timestamp']
         if elapsed < COOLDOWN_SEC:
             remaining = COOLDOWN_SEC - elapsed
             active[sym] = remaining
         else:
-            # 超过冷却时间，删除
-            del log[sym]
+            del cooldowns[sym]
             logger(f"🔓 {sym} 冷却结束，已清除")
-    save_cooldown_log(log)
+    db['cooldowns'] = cooldowns
+    _save_cooldown_db(db)
     return active
 
 def init_db():
@@ -450,23 +454,29 @@ def monitor_loop():
                     logger(f"   开仓${entry_price:.6f} 当前${current_price:.6f} 峰值${peak_price:.6f} 退出${exit_price:.6f}")
                     
                     # 执行平仓
-                    if close_position(symbol, direction, size):
-                        # 计算平仓盈亏
-                        if direction == 'long':
-                            realized_pnl = (exit_price - entry_price) / entry_price * 100
-                        else:
-                            realized_pnl = (entry_price - exit_price) / entry_price * 100
-                        
-                        # 添加冷却记录（写到cooldown_log.json）
-                        add_cooldown(symbol, exit_reason, entry_price, exit_price, realized_pnl)
-                        
-                        # 清空该币种记录（用symbol_direction作为key）
+                    close_ok = close_position(symbol, direction, size)
+                    
+                    # 计算平仓盈亏（无论成功失败都算，用于记录）
+                    if direction == 'long':
+                        realized_pnl = (exit_price - entry_price) / entry_price * 100
+                    else:
+                        realized_pnl = (entry_price - exit_price) / entry_price * 100
+                    
+                    # 添加冷却记录（平仓成功/失败/爆仓 都要冷却600秒）
+                    add_cooldown(symbol, exit_reason, entry_price, exit_price, realized_pnl)
+                    
+                    if close_ok:
+                        # 平仓成功：清除本地记录
                         db = load_db()
                         pos_key = f"{symbol}_{direction}"
                         if pos_key in db['positions']:
                             del db['positions'][pos_key]
                             save_db(db)
                             logger(f"🗑️ {symbol} 记录已清空")
+                        continue
+                    else:
+                        # 平仓失败：保留记录，下个循环重试。不在这里重复add_cooldown（上面已加）
+                        logger(f"⚠️ {symbol} 平仓失败，已进入冷却，下轮重试")
                         continue
                 
                 # 7. 写入数据库（key用symbol_direction区分多空）
@@ -490,14 +500,26 @@ def monitor_loop():
                 }
                 save_db(db)
             
-            # 8. 清理已平仓的记录
+            # 8. 清理已平仓/爆仓的记录（API已无此持仓）
             db = load_db()
             db_symbols = set(db['positions'].keys())
             closed_symbols = db_symbols - active_symbols
             if closed_symbols:
                 for pos_key in closed_symbols:
                     sym = pos_key.rsplit('_', 1)[0]
-                    logger(f"🗑️ {sym} 已平仓/爆仓，清除记录")
+                    # 从记录中获取成本/出场价，用于cooldown记录
+                    info = db['positions'].get(pos_key, {})
+                    entry_p = info.get('entry_price', 0)
+                    exit_p = info.get('current_price', 0)
+                    pnl_pct = info.get('pnl', 0)
+                    direction = info.get('direction', 'long')
+                    if direction == 'long':
+                        realized = (exit_p - entry_p) / entry_p * 100 if entry_p else 0
+                    else:
+                        realized = (entry_p - exit_p) / entry_p * 100 if entry_p else 0
+                    # 爆仓/被平：写入冷却记录
+                    add_cooldown(sym, '爆仓/被平', entry_p, exit_p, realized)
+                    logger(f"🗑️ {sym} 已平仓/爆仓，清除记录（冷却600秒）")
                     del db['positions'][pos_key]
                 save_db(db)
             
