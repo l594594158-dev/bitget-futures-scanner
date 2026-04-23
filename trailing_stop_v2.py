@@ -268,8 +268,10 @@ def get_all_positions():
         if db['positions']:
             logger(f"all-position API失败，使用缓存的 {len(db['positions'])} 个持仓")
             for sym, info in db['positions'].items():
+                # 清理symbol：去掉末尾的 _long 或 _short（防止脏数据累积）
+                base_symbol = sym.rsplit('_long', 1)[0].rsplit('_short', 1)[0]
                 positions.append({
-                    'symbol': sym,
+                    'symbol': base_symbol if base_symbol else sym,
                     'total': str(info.get('size', 0)),
                     'holdSide': info.get('direction', 'long'),
                     'openPriceAvg': str(info.get('entry_price', 0)),
