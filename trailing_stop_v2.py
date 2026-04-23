@@ -174,19 +174,30 @@ def add_cooldown(symbol: str, reason: str, entry_price: float, exit_price: float
     logger(f"🔒 {symbol} 进入冷却：{reason}，{COOLDOWN_SEC}秒后清除")
 
 def get_active_cooldowns():
-    """获取仍在冷却中的代币"""
+    """获取仍在冷却中的代币（优先用expires_at精确判断）"""
     db = _load_cooldown_db()
     cooldowns = db.get('cooldowns', {})
     now = time.time()
     active = {}
     for sym, info in list(cooldowns.items()):
-        elapsed = now - info['timestamp']
-        if elapsed < COOLDOWN_SEC:
-            remaining = COOLDOWN_SEC - elapsed
-            active[sym] = remaining
+        expires_at = info.get('expires_at')
+        if expires_at:
+            # 有 expires_at：用精确过期时间判断
+            remaining = expires_at - now
+            if remaining > 0:
+                active[sym] = remaining
+            else:
+                del cooldowns[sym]
+                logger(f"🔓 {sym} 冷却结束，已清除")
         else:
-            del cooldowns[sym]
-            logger(f"🔓 {sym} 冷却结束，已清除")
+            # 无 expires_at：用默认COOLDOWN_SEC判断
+            elapsed = now - info.get('timestamp', now)
+            if elapsed < COOLDOWN_SEC:
+                remaining = COOLDOWN_SEC - elapsed
+                active[sym] = remaining
+            else:
+                del cooldowns[sym]
+                logger(f"🔓 {sym} 冷却结束，已清除")
     db['cooldowns'] = cooldowns
     _save_cooldown_db(db)
     return active

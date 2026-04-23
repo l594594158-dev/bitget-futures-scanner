@@ -260,14 +260,19 @@ def save_cooldown(cooldowns):
 
 # ========== 冷却检查 ==========
 def is_in_cooldown(symbol: str) -> bool:
-    """检查是否在冷却中。支持两种格式：
-    - futures_trader写入的简单格式: {symbol: timestamp}
-    - trailing_stop_v2写入的嵌套格式: {symbol: {'timestamp': ..., 'reason': ...}}
+    """检查是否在冷却中。
+    优先读取 expires_at（精确过期时间），否则用 (time.time() - timestamp) < COOLDOWN_SEC 判断。
     """
     cooldowns = load_cooldown()
     entry = cooldowns.get(symbol, 0)
+    if not entry:
+        return False
     # 提取timestamp（兼容两种格式）
     if isinstance(entry, dict):
+        expires_at = entry.get('expires_at')
+        if expires_at:
+            # 有 expires_at：精确过期时间
+            return time.time() < expires_at
         last = entry.get('timestamp', 0)
     else:
         last = entry  # 简单timestamp格式
