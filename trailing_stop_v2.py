@@ -363,7 +363,9 @@ def close_position(symbol: str, direction: str, size: float) -> bool:
     }
     
     result = api_request('POST', '/api/v2/mix/order/place-order', body=body)
-    if result and result.get('code') in ('00000', '0'):
+    # 有orderId即表示交易所已接受订单（平仓成功）
+    # 部分响应有code=00000，部分只有orderId无code，都算成功
+    if result and (result.get('code') in ('00000', '0') or 'orderId' in result):
         logger(f"✅ {symbol} 平仓成功: {side} {size}")
         return True
     else:
