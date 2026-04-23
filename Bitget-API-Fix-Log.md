@@ -1154,3 +1154,94 @@ data = api_request('GET', '/api/v2/mix/market/candles',
 
 ### 附：granularity 可用值
 `1m` / `5m` / `15m` / `1h` / `4h` / `1d`
+
+---
+
+## 2026-04-23 修复：移动止盈 + 冷却机制（v2.1）
+
+### 发现的问题
+
+**问题1：平仓失败误判为爆仓**
+- **现象**：BSBUSDT 移动止盈触发后，平仓API明明返回了 `orderId`（说明交易所已成交），但代码误判为"失败"，清除了本地记录，导致冷却没写入
+- **根因**：判断条件 `code in ('00000', '0')` — Bitget 部分成功响应**无 code 字段**，只返回 `{'clientOid': ..., 'orderId': ...}`
+- **后果**：冷却文件无记录 → 下一个循环重复尝试开仓
+
+**问题2：平仓失败时错误清除记录**
+- **现象**：平仓API失败 → 代码直接删除本地记录 → 下一个循环认为"无持仓" → 可能重复开仓
+- **根因**：只检查了 `if close_position()` 成功分支，else 分支删除了记录
+- **修复**：平仓失败 → 保留记录 → 下个循环重试
+
+**问题3：冷却文件互通失效**
+- **现象**：`trailing_stop_v2.py` 写冷却到 `cooldown_log.json`，`futures_trader.py` 读 `db_positions_v2.json`，两不相通
+- **根因**：两个脚本用不同的冷却文件路径
+
+**问题4：爆仓/被平仓时未写冷却**
+- **现象**：Section 8 检测到 `active_symbols` 变化（爆仓/被平）时，直接删除记录，未写冷却
+- **根因**：缺少 `add_cooldown()` 调用
+
+### 修复内容
+
+#### 修复1：平仓成功判断（trailing_stop_v2.py）
+```python
+# 改前
+if result and result.get('code') in ('00000', '0'):
+
+# 改后：有orderId即认为成功
+if result and (result.get('code') in ('00000', '0') or 'orderId' in result):
+```
+
+#### 修复2：平仓失败不删记录（trailing_stop_v2.py）
+```python
+# 改前：平仓失败 → continue（隐含删除记录）
+if close_position(symbol, direction, size):
+    ...
+    continue
+
+# 改后：平仓失败 → 保留记录下轮重试
+close_ok = close_position(symbol, direction, size)
+add_cooldown(...)  # 无论成功/失败都加冷却
+if close_ok:
+    del db['positions'][pos_key]
+    continue
+else:
+    logger(f"⚠️ 平仓失败，已进入冷却，下轮重试")
+    continue  # 不删除记录
+```
+
+#### 修复3：冷却文件统一（trailing_stop_v2.py）
+- 废弃 `cooldown_log.json`
+- 统一写入 `db_positions_v2.json['cooldowns']`
+- 与 `futures_trader.py` 共用同一冷却文件
+
+#### 修复4：爆仓/被平时写冷却（trailing_stop_v2.py）
+```python
+# 删除持仓记录前，先写冷却
+add_cooldown(sym, '爆仓/被平', entry_p, exit_p, realized)
+logger(f"🗑️ {sym} 已平仓/爆仓，清除记录（冷却600秒）")
+del db['positions'][pos_key]
+```
+
+#### 修复5：冷却格式兼容（futures_trader.py）
+```python
+# 兼容两种格式：简单timestamp 或 嵌套 {timestamp, reason, ...}
+entry = cooldowns.get(symbol, 0)
+if isinstance(entry, dict):
+    last = entry.get('timestamp', 0)
+else:
+    last = entry
+```
+
+### 重启记录
+
+| 时间 | 操作 | PID |
+|------|------|-----|
+| 2026-04-23 22:24 | trailing_stop_v2.py 重启 | 2941084 |
+| 2026-04-23 22:17 | futures_trader.py 重启 | 2939555 |
+| 2026-04-23 14:33 | contract_monitor.py 重启 | 2829275（未动） |
+
+### Git 提交
+
+```
+fix: 平仓失败不删记录/爆仓自动加600秒冷却/冷却文件统一
+fix: 平仓成功判断 — 有orderId即为成功，兼容无code的响应
+```
